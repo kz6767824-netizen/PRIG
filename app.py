@@ -13,14 +13,30 @@ from report_builder import build_full_report
 from severity import classify_migration
 from severity_rollup import compute_overall_severity
 from write_back_tag import write_back_tag
+from write_back_context_document import write_back_context_document
 
 st.set_page_config(page_title="PR Impact Guardian", layout="centered")
 st.title("🛡️ PR Impact Guardian")
-st.caption("One bad ALTER TABLE can silently break every downstream dashboard.Don't let a DROP COLUMN become a production incident. This agent stops it before merge.")
+st.caption("One bad ALTER TABLE can silently break every downstream dashboard. Don't let a DROP COLUMN become a production incident. This agent stops it before merge.")
 
 # --- Sidebar controls ---
 st.sidebar.header("Settings")
 dry_run = st.sidebar.checkbox("🔒 Dry run (don't write to DataHub)", value=True)
+use_llm = st.sidebar.checkbox(
+    "✨ Use LLM for explanations (Groq)",
+    value=False,
+    help="If unchecked, uses the deterministic template. If checked but no "
+         "GROQ_API_KEY is set (or the call fails), automatically falls back "
+         "to the template -- the report never breaks either way."
+)
+save_context_doc = st.sidebar.checkbox(
+    "📄 Also save as a Context Document",
+    value=False,
+    help="Saves the full report as a permanent, searchable Context Document "
+         "in DataHub's knowledge base, linked to this table -- in addition "
+         "to (not instead of) the severity tag. Off by default since each "
+         "run creates a new document (no update-in-place yet)."
+)
 show_details = st.sidebar.checkbox("Show technical details", value=False)
 
 st.sidebar.markdown("---")
@@ -29,13 +45,38 @@ st.sidebar.markdown("""
 1. Paste your SQL migration
 2. We parse it and check DataHub's real schema + lineage
 3. You get a severity verdict and impact report
-4. If not dry-run, we tag the dataset in DataHub
+4. If not dry-run, we tag the dataset in DataHub (auto-creating the tag if
+   needed) and optionally save a Context Document
 """)
 
 # --- Main form ---
 st.markdown("### Migration Input")
 
 table_name = st.text_input("Table name", value="orders", help="The table this migration targets")
+dataset_urn = f"urn:li:dataset:(urn:li:dataPlatform:postgres,{table_name},PROD)"
+
+# --- Tag management (moved here: AFTER dataset_urn exists, fixing the
+#     "name 'dataset_urn' is not defined" bug from placing this earlier) ---
+st.markdown("---")
+with st.expander("🧹 Tag management"):
+    st.caption(f"Applies to: `{dataset_urn}`")
+    if st.button("Clear all review tags from this dataset"):
+        with st.spinner("Removing tags..."):
+            try:
+                client = DataHubClient(server="http://localhost:8081", token="")
+                with DataHubContext(client):
+                    from datahub_agent_context.mcp_tools import remove_tags
+                    remove_tags(
+                        tag_urns=[
+                            "urn:li:tag:pending-review",
+                            "urn:li:tag:pending-review-breaking",
+                            "urn:li:tag:pending-review-critical",
+                        ],
+                        entity_urns=[dataset_urn],
+                    )
+                st.success("Tags cleared!")
+            except Exception as e:
+                st.error(f"Could not remove: {e}")
 
 sql_input = st.text_area(
     "SQL Migration",
@@ -64,9 +105,14 @@ if analyze_clicked:
         st.error(f"Could not parse SQL: {e}")
         st.stop()
 
+    if not parsed.get("operations"):
+        st.error("No recognizable operations found in this SQL. Nothing to check.")
+        st.stop()
+
     dataset_urn = f"urn:li:dataset:(urn:li:dataPlatform:postgres,{table_name},PROD)"
 
-    with st.spinner("Analyzing against DataHub..."):
+    spinner_msg = "Analyzing against DataHub" + (" (using LLM for explanations)..." if use_llm else "...")
+    with st.spinner(spinner_msg):
         try:
             client = DataHubClient(server="http://localhost:8081", token="")
             with DataHubContext(client):
@@ -75,6 +121,7 @@ if analyze_clicked:
                     table=table_name,
                     table_urn=dataset_urn,
                     operations=parsed["operations"],
+                    use_llm=use_llm,
                 )
 
                 # Recompute classified operations for the rollup
@@ -82,7 +129,7 @@ if analyze_clicked:
                 downstream_assets = get_downstream_assets(dataset_urn)
                 downstream_count = len(downstream_assets)
                 downstream_lookup = {
-                    op.get("column"): downstream_count 
+                    op.get("column"): downstream_count
                     for op in parsed["operations"] if op.get("column")
                 }
                 pii_lookup = {op.get("column"): False for op in parsed["operations"] if op.get("column")}
@@ -97,7 +144,7 @@ if analyze_clicked:
 
     # --- Display results ---
     st.markdown("---")
-    
+
     # Severity badge
     color_map = {
         "Safe": ("#28a745", "✅"),
@@ -106,25 +153,28 @@ if analyze_clicked:
         "Critical": ("#721c24", "⛔")
     }
     color, icon = color_map.get(overall, ("#6c757d", "❓"))
-    
+
     st.markdown(
         f"<div style='background-color:{color};padding:12px 20px;border-radius:8px;color:white;font-size:20px;font-weight:bold;'>"
         f"{icon} Overall Severity: {overall}</div>",
         unsafe_allow_html=True
     )
+    if use_llm:
+        st.caption("✨ Explanations below generated by LLM (Groq) where available, with automatic fallback to the template.")
 
     # Per-operation breakdown
     st.markdown("### Per-Column Verdict")
-    cols = st.columns(len(classified))
-    for i, c in enumerate(classified):
-        with cols[i]:
-            sev = c["severity"]
-            sev_color = color_map.get(sev, ("#6c757d", "?"))[0]
-            st.markdown(
-                f"<div style='border-left:4px solid {sev_color};padding-left:10px;'>"
-                f"<b>{c['column']}</b><br/><span style='color:{sev_color};font-weight:bold;'>{sev}</span></div>",
-                unsafe_allow_html=True
-            )
+    if classified:
+        cols = st.columns(len(classified))
+        for i, c in enumerate(classified):
+            with cols[i]:
+                sev = c["severity"]
+                sev_color = color_map.get(sev, ("#6c757d", "?"))[0]
+                st.markdown(
+                    f"<div style='border-left:4px solid {sev_color};padding-left:10px;'>"
+                    f"<b>{c['column']}</b><br/><span style='color:{sev_color};font-weight:bold;'>{sev}</span></div>",
+                    unsafe_allow_html=True
+                )
 
     # Full report
     st.markdown("### Impact Report")
@@ -140,23 +190,50 @@ if analyze_clicked:
                 "classified": classified,
                 "overall": overall,
                 "dataset_urn": dataset_urn,
+                "use_llm": use_llm,
             })
 
-    # Write-back section
+    # --- Write-back section: tag ---
     st.markdown("---")
+    st.markdown("### Write-back to DataHub")
+
     if dry_run:
-        st.info("🔒 **Dry run mode is ON.** No tag was written to DataHub. Uncheck 'Dry run' in the sidebar and re-run to write the tag.")
+        st.info("🔒 **Dry run mode is ON.** Nothing was written to DataHub. Uncheck 'Dry run' in the sidebar and re-run to write for real.")
     else:
-        with st.spinner("Writing tag to DataHub..."):
-            try:
-                result = write_back_tag(dataset_urn, overall, dry_run=False)
-                if result.get("success"):
-                    st.success(f"✅ Tag written to DataHub: `{result.get('message')}`")
-                    st.info(f"View it at: http://localhost:9002/dataset/{dataset_urn}")
-                else:
-                    st.error(f"Write failed: {result}")
-            except Exception as e:
-                st.error(f"Write-back failed: {e}")
+        with DataHubContext(client):
+            with st.spinner("Writing tag to DataHub (auto-creating the tag if needed)..."):
+                try:
+                    tag_result = write_back_tag(dataset_urn, overall, dry_run=False)
+                    if tag_result is None:
+                        st.info(f"Overall severity is '{overall}' -- below the tagging threshold, no tag written.")
+                    elif tag_result.get("success"):
+                        st.success(f"✅ Tag written to DataHub: `{tag_result.get('message')}`")
+                        st.info(f"View it at: http://localhost:9002/dataset/{dataset_urn}")
+                    else:
+                        st.error(f"Tag write failed: {tag_result}")
+                except Exception as e:
+                    st.error(f"Tag write-back failed: {e}")
+
+            # --- Write-back section: Context Document (separate opt-in) ---
+            if save_context_doc:
+                with st.spinner("Saving Context Document to DataHub..."):
+                    try:
+                        doc_result = write_back_context_document(
+                            table=table_name,
+                            table_urn=dataset_urn,
+                            report_content=report,
+                            overall_severity=overall,
+                            dry_run=False,
+                        )
+                        if doc_result and doc_result.get("success"):
+                            doc_urn = doc_result.get("urn", "")
+                            st.success(f"✅ Context Document saved: `{doc_result.get('message')}`")
+                            if doc_urn:
+                                st.info(f"View it at: http://localhost:9002/document/{doc_urn}")
+                        else:
+                            st.error(f"Context Document write failed: {doc_result}")
+                    except Exception as e:
+                        st.error(f"Context Document write-back failed: {e}")
 
 # --- Footer ---
 st.markdown("---")

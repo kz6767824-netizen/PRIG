@@ -1,17 +1,10 @@
 """
 write_back_tag.py
 
-Maps an overall migration severity to the correct DataHub tag and writes
-it back -- or, by default, just prints what WOULD be written (dry_run=True)
-so repeated pipeline test runs don't spam duplicate tag-write calls against
-the live instance.
-
-IMPORTANT: the tag URNs referenced below (pending-review-breaking,
-pending-review-critical) must already exist as real tag entities in
-DataHub -- created once via the UI, same as 'pending-review' and 'PII'
-were. If they don't exist yet, add_tags() will fail with the same
-"Urn does not exist" error seen earlier in this project. This function
-does NOT create tags; it only applies existing ones.
+FIX: ensure_tags_exist() is now called with the SINGLE specific tag name
+about to be applied -- not all four every time. write_back_tag() only
+ever applies one tag per call, so creating the others was unnecessary
+API calls with no benefit.
 """
 
 from typing import Optional, Dict, Any
@@ -30,22 +23,19 @@ def write_back_tag(
 ) -> Optional[Dict[str, Any]]:
     """
     Args:
-        table_urn: the dataset URN to tag (whole-entity, matching how
-            add_tags was actually tested -- not column-level).
+        table_urn: the dataset URN to tag (whole-entity).
         overall_severity: result of compute_overall_severity().
         dry_run: if True (default), only prints what would happen and
-            makes NO live API call. Must be explicitly set to False to
-            perform a real write.
+            makes NO live API call.
 
     Returns:
         The add_tags() result dict if a real write happened, or a dict
         describing the dry-run action if not, or None if severity is
-        Safe/Low (no write-back needed at all, not even a dry-run note).
+        Safe/Low (no write-back needed at all).
     """
     tag_urn = SEVERITY_TO_TAG.get(overall_severity)
 
     if tag_urn is None:
-        # Safe or Low -- no write-back at all, by design.
         print(f"[write_back_tag] Overall severity is '{overall_severity}' "
               f"-- no tag written (below threshold).")
         return None
@@ -56,8 +46,13 @@ def write_back_tag(
               f"No live write performed. Set dry_run=False to actually write.")
         return {"dry_run": True, "would_apply_tag": tag_urn, "entity_urn": table_urn}
 
-    # Real write -- only reached when dry_run=False.
+    # Real write -- ensure ONLY this specific tag exists first, then apply it.
+    from ensure_tags_exist import ensure_tags_exist
     from datahub_agent_context.mcp_tools import add_tags
+
+    tag_name = tag_urn.split(":")[-1]  # "urn:li:tag:pending-review-breaking" -> "pending-review-breaking"
+    ensure_tags_exist(tag_names=[tag_name])
+
     result = add_tags(
         tag_urns=[tag_urn],
         entity_urns=[table_urn],

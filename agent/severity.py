@@ -1,24 +1,11 @@
 """
 severity.py
 
-REFACTORED: classifies severity PER OPERATION (per column), not per migration.
+Classifies severity PER OPERATION (per column), not per migration.
 
-This replaces the old classify_severity(operations, downstream_count, is_pii)
-signature, which collapsed an entire multi-column migration into one severity
-label. Now every operation in a migration gets its own independent verdict.
-
-Known, intentional design choices carried over from the locked project brief:
-- TYPE_CHANGE is Breaking by default, even when it "looks" compatible
-  (e.g. INT -> BIGINT). This is deliberately conservative and documented
-  as such in the README, not silently relaxed based on downstream_count.
-  We DO expose an `urgency` field (high/low) alongside the severity so the
-  report can show nuance without reversing the locked decision.
-- DROP+ADD rename ambiguity is NOT resolved here. This function classifies
-  operations independently; the rename *note* is a separate, aggregate-level
-  heuristic (see rename_heuristic.py) applied across the whole operation
-  list, not a change to any individual operation's severity.
-- Unknown/unparseable operations default to Breaking (risky), never Safe/Low.
-  Silence or parser failure should never look like a green light.
+FIX applied: the RENAME branch now forwards `new_column` (the target name)
+into its returned dict, so explainer.py can reference what a column was
+renamed TO, not just that a rename happened.
 """
 
 from typing import Optional, List, Dict, Any
@@ -32,23 +19,7 @@ def classify_operation(
     is_pii: bool = False,
 ) -> Dict[str, Any]:
     """
-    Classify a SINGLE operation.
-
-    Args:
-        op: dict describing one parsed operation, e.g.
-            {"action": "DROP", "column": "shipping_address"}
-            {"action": "ADD", "column": "status", "type": "VARCHAR",
-             "nullable": False, "default": None}
-        downstream_count: number of downstream assets found for this
-            operation's column (see the honesty note in report_builder.py
-            about whether this is truly column-level or a table-level
-            approximation).
-        is_pii: whether this specific column is tagged as PII/sensitive
-            in DataHub (same caveat as above).
-
-    Returns:
-        dict with: column, action, severity, reason, governance_flags,
-        and (for TYPE_CHANGE only) urgency.
+    Classify a SINGLE operation. See project docs for the full rule matrix.
     """
     action = (op.get("action") or "UNKNOWN").upper()
     column = op.get("column", "?")
@@ -159,9 +130,13 @@ def classify_operation(
 
     # --- RENAME (explicit ALTER TABLE ... RENAME COLUMN) ---
     if action == "RENAME":
+        # FIX: forward new_column so explainer.py can say what it was
+        # renamed TO, not just that a rename happened.
+        new_column = op.get("new_column")
         if downstream_count > 0:
             return {
                 "column": column,
+                "new_column": new_column,
                 "action": action,
                 "severity": "Breaking",
                 "reason": f"Column rename — {downstream_count} downstream "
@@ -171,6 +146,7 @@ def classify_operation(
             }
         return {
             "column": column,
+            "new_column": new_column,
             "action": action,
             "severity": "Low",
             "reason": "Column rename with no downstream dependents found.",
@@ -204,13 +180,7 @@ def classify_migration(
     downstream_lookup: Dict[str, int],
     pii_lookup: Dict[str, bool],
 ) -> List[Dict[str, Any]]:
-    """
-    Classify every operation in a migration independently.
-
-    downstream_lookup / pii_lookup: column_name -> value. Callers (report_builder.py)
-    are responsible for populating these per-column, with the caveat documented there
-    about table-level vs. column-level lineage granularity.
-    """
+    """Classify every operation in a migration independently."""
     results = []
     for op in operations:
         column = op.get("column", "?")
@@ -221,14 +191,13 @@ def classify_migration(
 
 
 if __name__ == "__main__":
-    # Quick smoke test covering every branch, including the new edge cases.
     test_ops = [
         {"action": "DROP", "column": "shipping_address"},
         {"action": "DROP", "column": "temp_debug_id"},
         {"action": "ADD", "column": "status", "type": "VARCHAR", "nullable": True},
         {"action": "ADD", "column": "email", "type": "VARCHAR", "nullable": False, "default": None},
         {"action": "TYPE_CHANGE", "column": "total_amount"},
-        {"action": "RENAME", "column": "old_name"},
+        {"action": "RENAME", "column": "old_name", "new_column": "new_name"},
         {"action": "SET_NOT_NULL", "column": "customer_id"},
         {"action": "DROP_TABLE", "column": None},
         {"action": "WEIRD_UNSUPPORTED_OP", "column": "mystery_col"},
@@ -238,3 +207,9 @@ if __name__ == "__main__":
 
     for result in classify_migration(test_ops, downstream, pii):
         print(result)
+
+    print()
+    print("--- Confirming FIX: RENAME includes new_column ---")
+    rename_result = [r for r in classify_migration(test_ops, downstream, pii) if r["action"] == "RENAME"][0]
+    assert rename_result.get("new_column") == "new_name", "FIX FAILED"
+    print(f"PASS: new_column = {rename_result['new_column']!r}")
