@@ -5,13 +5,14 @@
 DROP TABLE orders;
 ```
 
-**Overall Severity: ⛔ Critical**
+![Overall Severity: Critical](https://img.shields.io/badge/Overall%20Severity-Critical-7f1d1d?style=for-the-badge)
 
 ---
 
 ## PR Impact Report: `orders`
 
 ### Column: table-level
+![Critical](https://img.shields.io/badge/table--level-Critical-7f1d1d)
 
 - **Table:** `orders`
 - **Severity:** `Critical`

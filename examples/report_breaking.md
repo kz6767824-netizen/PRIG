@@ -5,13 +5,14 @@
 ALTER TABLE orders DROP COLUMN shipping_address;
 ```
 
-**Overall Severity: 🚨 Breaking**
+![Overall Severity: Breaking](https://img.shields.io/badge/Overall%20Severity-Breaking-red?style=for-the-badge)
 
 ---
 
 ## PR Impact Report: `orders`
 
 ### Column: `shipping_address`
+![Breaking](https://img.shields.io/badge/shipping__address-Breaking-red)
 
 - **Table:** `orders`
 - **Severity:** `Breaking`

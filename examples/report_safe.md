@@ -5,13 +5,14 @@
 ALTER TABLE orders ADD COLUMN status VARCHAR;
 ```
 
-**Overall Severity: ✅ Safe**
+![Overall Severity: Safe](https://img.shields.io/badge/Overall%20Severity-Safe-brightgreen?style=for-the-badge)
 
 ---
 
 ## PR Impact Report: `orders`
 
 ### Column: `status`
+![Safe](https://img.shields.io/badge/status-Safe-brightgreen)
 
 - **Table:** `orders`
 - **Severity:** `Safe`
