@@ -9,6 +9,11 @@ it can no longer silently drift out of sync.
 
 Run from inside agent/ (imports are local to this folder already).
 """
+import sys
+import os
+
+AGENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent")
+sys.path.insert(0, AGENT_DIR)
 
 from datahub.sdk.main_client import DataHubClient
 from datahub_agent_context.context import DataHubContext

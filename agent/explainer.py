@@ -6,7 +6,10 @@ FIXES applied:
   2. RENAME's suggestion text now references new_column.
   3. All headers now use Markdown bullet points so they render on separate lines.
   4. Every suggestion block starts with a bold **Suggestion:** heading.
-  5. Wording acknowledges that dependencies have ALREADY been checked by the tool.
+  5. Wording acknowledges the tool has checked dependencies via DataHub's
+     lineage graph, while still asking for human confirmation -- avoids
+     implying the check is exhaustive/final, consistent with the project's
+     "trust but verify" disclaimer elsewhere in the report.
   6. Disclaimer is appended separately by report_builder.py, not inside this function.
 """
 
@@ -89,9 +92,10 @@ def template_explanation(
     elif has_type_change:
         lines.append("**Suggestion:**")
         lines.append(
-            "Dependencies already checked (see above). Type changes can silently "
-            "corrupt downstream calculations. Consider adding a new column with "
-            "the target type, backfilling it, and migrating downstream consumers "
+            "Dependencies checked against DataHub's lineage graph (see above) — "
+            "please review before merging. Type changes can silently corrupt "
+            "downstream calculations. Consider adding a new column with the "
+            "target type, backfilling it, and migrating downstream consumers "
             "before removing the original column."
         )
     elif has_drop:
@@ -100,19 +104,21 @@ def template_explanation(
             if len(downstream_assets) > 2:
                 lines.append("**Suggestion:**")
                 lines.append(
-                    f"Dependencies already checked — this column feeds "
-                    f"{len(downstream_assets)} downstream assets (listed above). "
-                    f"Do not drop directly. Use a phased deprecation: keep the "
-                    f"column live, mark it deprecated in DataHub, and remove it "
-                    f"only after confirming all consumers have migrated."
+                    f"Dependencies checked against DataHub's lineage graph — this "
+                    f"column feeds {len(downstream_assets)} downstream assets "
+                    f"(listed above); please review before merging. Do not drop "
+                    f"directly. Use a phased deprecation: keep the column live, "
+                    f"mark it deprecated in DataHub, and remove it only after "
+                    f"confirming all consumers have migrated."
                 )
             else:
                 lines.append("**Suggestion:**")
                 lines.append(
-                    f"Dependencies already checked — affected downstream asset(s): "
-                    f"{asset_list}. Coordinate with the owner(s) of these asset(s) "
-                    f"before merging. A short deprecation window reduces risk "
-                    f"compared to an immediate drop."
+                    f"Dependencies checked against DataHub's lineage graph — "
+                    f"affected downstream asset(s): {asset_list}; please review "
+                    f"before merging. Coordinate with the owner(s) of these "
+                    f"asset(s) before merging. A short deprecation window reduces "
+                    f"risk compared to an immediate drop."
                 )
         else:
             lines.append("**Suggestion:**")
@@ -168,10 +174,14 @@ if __name__ == "__main__":
         downstream_assets=[{"name": "daily_revenue_dashboard", "type": "DATASET"}],
         new_column="delivery_address",
     ))
-    print("\n--- Test: DROP with downstream ---")
-    print(template_explanation(
+    print("\n--- Test: DROP with downstream (wording check) ---")
+    result = template_explanation(
         table="orders",
         operations=["DROP"],
         severity="Breaking",
         downstream_assets=[{"name": "daily_revenue_dashboard", "type": "DATASET"}],
-    ))
+    )
+    print(result)
+    assert "Dependencies already checked" not in result, "Old phrasing still present!"
+    assert "please review before merging" in result, "New phrasing missing!"
+    print("\nPASS: wording updated correctly, old absolute phrasing removed.")
