@@ -1,19 +1,89 @@
 """
-explainer.py
+agent/explainer.py
 
-FIXES applied:
-  1. Added an explicit DROP_TABLE/TRUNCATE branch.
-  2. RENAME's suggestion text now references new_column.
-  3. All headers now use Markdown bullet points so they render on separate lines.
-  4. Every suggestion block starts with a bold **Suggestion:** heading.
-  5. Wording acknowledges the tool has checked dependencies via DataHub's
-     lineage graph, while still asking for human confirmation -- avoids
-     implying the check is exhaustive/final, consistent with the project's
-     "trust but verify" disclaimer elsewhere in the report.
-  6. Disclaimer is appended separately by report_builder.py, not inside this function.
+Deterministic template explanations + remediation SQL generator.
 """
 
 from typing import List, Dict, Any, Optional
+
+
+def generate_remediation_sql(
+    table: str,
+    operations: List[str],
+    column: Optional[str] = None,
+    new_column: Optional[str] = None,
+) -> str:
+    """
+    Generates safe, non-breaking SQL refactoring patterns for destructive operations.
+    Uses the rename-then-view pattern to avoid duplicate column errors.
+    """
+    col = column or "<column_name>"
+    has_drop = "DROP" in operations
+    has_rename = "RENAME" in operations
+    has_type_change = "TYPE_CHANGE" in operations
+    has_table_drop = "DROP_TABLE" in operations
+
+    if has_table_drop:
+        return (
+            f"-- Safe deprecation for table drop:\n"
+            f"-- Step 1: Rename table to preserve data during transition\n"
+            f"ALTER TABLE {table} RENAME TO {table}_deprecated_archive;\n\n"
+            f"-- Step 2: Create view with old name for backward compatibility\n"
+            f"CREATE OR REPLACE VIEW {table} AS\n"
+            f"SELECT * FROM {table}_deprecated_archive;\n\n"
+            f"-- Step 3: After confirming zero queries, drop archived table\n"
+            f"-- DROP TABLE {table}_deprecated_archive;"
+        )
+
+    if has_rename:
+        target = new_column or "<new_column_name>"
+        return (
+            f"-- Safe rename for '{col}' -> '{target}':\n"
+            f"-- Step 1: Add new column\n"
+            f"ALTER TABLE {table} ADD COLUMN {target} <TYPE>;\n\n"
+            f"-- Step 2: Backfill existing data\n"
+            f"-- UPDATE {table} SET {target} = {col};\n\n"
+            f"-- Step 3: Rename old column to free up the name\n"
+            f"ALTER TABLE {table} RENAME COLUMN {col} TO {col}_deprecated;\n\n"
+            f"-- Step 4: Create view with old name for backward compatibility\n"
+            f"CREATE OR REPLACE VIEW {table}_legacy AS\n"
+            f"SELECT {col}_deprecated AS {col}, *\n"
+            f"FROM {table};\n\n"
+            f"-- Step 5: After all consumers migrate, drop deprecated column\n"
+            f"-- ALTER TABLE {table} DROP COLUMN {col}_deprecated;"
+        )
+
+    if has_type_change:
+        return (
+            f"-- Safe type change for '{col}':\n"
+            f"-- Step 1: Add new column with target type\n"
+            f"ALTER TABLE {table} ADD COLUMN {col}_new <TARGET_TYPE>;\n\n"
+            f"-- Step 2: Backfill with explicit cast\n"
+            f"-- UPDATE {table} SET {col}_new = CAST({col} AS <TARGET_TYPE>);\n\n"
+            f"-- Step 3: Rename old column to free up the name\n"
+            f"ALTER TABLE {table} RENAME COLUMN {col} TO {col}_deprecated;\n\n"
+            f"-- Step 4: Create view with old name pointing to new column\n"
+            f"CREATE OR REPLACE VIEW {table}_legacy AS\n"
+            f"SELECT {col}_new AS {col}, *\n"
+            f"FROM {table};\n\n"
+            f"-- Step 5: After migration, drop deprecated column\n"
+            f"-- ALTER TABLE {table} DROP COLUMN {col}_deprecated;"
+        )
+
+    if has_drop:
+        return (
+            f"-- Safe deprecation for column '{col}':\n"
+            f"-- Step 1: Rename column to preserve data and free up the name\n"
+            f"ALTER TABLE {table} RENAME COLUMN {col} TO {col}_deprecated;\n\n"
+            f"-- Step 2: Create backward-compatible view with old column name\n"
+            f"CREATE OR REPLACE VIEW {table}_legacy AS\n"
+            f"SELECT {col}_deprecated AS {col}, *\n"
+            f"FROM {table};\n\n"
+            f"-- Step 3: After all consumers migrate, drop deprecated column\n"
+            f"-- ALTER TABLE {table} DROP COLUMN {col}_deprecated;"
+        )
+
+    return ""
 
 
 def template_explanation(
@@ -24,11 +94,12 @@ def template_explanation(
     is_pii: bool = False,
     governance_flags: Optional[List[str]] = None,
     new_column: Optional[str] = None,
+    column: Optional[str] = None,
 ) -> str:
     """
-    Generates a structured explanation for a SINGLE operation using
-    real DataHub-derived factors: operation type, severity, downstream
-    asset types/count, and PII flag.
+    Generates a structured explanation for a SINGLE operation.
+    FIX: `column` moved to the END of the signature to avoid positional-arg mismatch
+    with llm_explanation.py's fallback call.
     """
     governance_flags = governance_flags or []
 
@@ -41,15 +112,15 @@ def template_explanation(
     has_truncate = "TRUNCATE" in operations
 
     dashboards = [a for a in downstream_assets if a.get("type", "").upper() == "DASHBOARD"]
-    asset_names = [a["name"] for a in downstream_assets]
 
     lines = []
-    # FIX: Use Markdown bullet points so each renders on its own line
     lines.append(f"- **Table:** `{table}`")
+    if column:
+        lines.append(f"- **Column:** `{column}`")
     lines.append(f"- **Severity:** `{severity}`")
     lines.append("")
 
-    # --- Downstream summary ---
+    # Downstream summary
     if downstream_assets:
         lines.append(f"**Downstream impact:** {len(downstream_assets)} asset(s) found in DataHub:")
         for a in downstream_assets:
@@ -63,7 +134,7 @@ def template_explanation(
         lines.append("**Downstream impact:** None found in DataHub's lineage graph.")
     lines.append("")
 
-    # --- Suggestion, branching on operation type ---
+    # Suggestion
     if has_table_drop or has_truncate:
         action_word = "drop" if has_table_drop else "truncate"
         lines.append("**Suggestion:**")
@@ -92,40 +163,32 @@ def template_explanation(
     elif has_type_change:
         lines.append("**Suggestion:**")
         lines.append(
-            "Dependencies checked against DataHub's lineage graph (see above) — "
-            "please review before merging. Type changes can silently corrupt "
-            "downstream calculations. Consider adding a new column with the "
-            "target type, backfilling it, and migrating downstream consumers "
-            "before removing the original column."
+            "Type changes can silently corrupt downstream calculations. "
+            "Consider adding a new column with the target type, backfilling it, "
+            "and migrating downstream consumers before removing the original column."
         )
     elif has_drop:
         if severity in ("Breaking", "Critical"):
-            asset_list = ", ".join(f"`{a['name']}`" for a in downstream_assets)
             if len(downstream_assets) > 2:
                 lines.append("**Suggestion:**")
                 lines.append(
-                    f"Dependencies checked against DataHub's lineage graph — this "
-                    f"column feeds {len(downstream_assets)} downstream assets "
-                    f"(listed above); please review before merging. Do not drop "
-                    f"directly. Use a phased deprecation: keep the column live, "
-                    f"mark it deprecated in DataHub, and remove it only after "
-                    f"confirming all consumers have migrated."
+                    f"This column feeds {len(downstream_assets)} downstream assets. "
+                    f"Do not drop directly. Use a phased deprecation: keep the "
+                    f"column live, mark it deprecated in DataHub, and remove it "
+                    f"only after confirming all consumers have migrated."
                 )
             else:
                 lines.append("**Suggestion:**")
                 lines.append(
-                    f"Dependencies checked against DataHub's lineage graph — "
-                    f"affected downstream asset(s): {asset_list}; please review "
-                    f"before merging. Coordinate with the owner(s) of these "
-                    f"asset(s) before merging. A short deprecation window reduces "
-                    f"risk compared to an immediate drop."
+                    "Coordinate directly with the owner(s) of the affected "
+                    "downstream asset(s) before merging. A short deprecation "
+                    "window reduces risk compared to an immediate drop."
                 )
         else:
             lines.append("**Suggestion:**")
             lines.append(
-                "No downstream dependents were found in DataHub's lineage graph. "
-                "This appears safe to proceed, but double-check that lineage is "
-                "fully up to date — unregistered consumers wouldn't show up here."
+                "No downstream dependents were found. This appears safe, but "
+                "double-check that lineage is fully up to date."
             )
     elif has_add:
         lines.append("**Suggestion:**")
@@ -136,24 +199,31 @@ def template_explanation(
         lines.append("**Suggestion:**")
         lines.append("No specific recommendation — review manually.")
 
-    # --- PII/compliance note ---
+    # PII note
     if is_pii:
         lines.append("")
         lines.append(
             "**Compliance note:** This column is tagged as PII/sensitive in DataHub. "
-            "Any change here may have governance or compliance implications "
-            "beyond technical breakage — consider looping in your data "
-            "governance owner before merging."
+            "Any change here may have governance implications — consider looping in "
+            "your data governance owner before merging."
         )
 
-    # --- Governance flags ---
     if "NEW_PII_COLUMN_ADDED" in governance_flags:
         lines.append("")
         lines.append(
-            "**Governance note:** This adds a NEW PII-tagged column. Even though "
-            "this is not a breaking change, confirm appropriate masking/access "
-            "controls are applied before merging."
+            "**Governance note:** This adds a NEW PII-tagged column. Confirm "
+            "appropriate masking/access controls are applied before merging."
         )
+
+    # Remediation SQL for severe operations
+    if severity in ("Breaking", "Critical"):
+        remediation = generate_remediation_sql(table, operations, column=column, new_column=new_column)
+        if remediation:
+            lines.append("")
+            lines.append("**Safe migration pattern:**")
+            lines.append("```sql")
+            lines.append(remediation)
+            lines.append("```")
 
     return "\n".join(lines)
 
@@ -173,15 +243,13 @@ if __name__ == "__main__":
         severity="Breaking",
         downstream_assets=[{"name": "daily_revenue_dashboard", "type": "DATASET"}],
         new_column="delivery_address",
+        column="shipping_address",
     ))
-    print("\n--- Test: DROP with downstream (wording check) ---")
-    result = template_explanation(
+    print("\n--- Test: DROP with downstream ---")
+    print(template_explanation(
         table="orders",
         operations=["DROP"],
         severity="Breaking",
         downstream_assets=[{"name": "daily_revenue_dashboard", "type": "DATASET"}],
-    )
-    print(result)
-    assert "Dependencies already checked" not in result, "Old phrasing still present!"
-    assert "please review before merging" in result, "New phrasing missing!"
-    print("\nPASS: wording updated correctly, old absolute phrasing removed.")
+        column="shipping_address",
+    ))

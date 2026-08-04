@@ -2,33 +2,10 @@
 write_back_context_document.py
 
 Saves the full PR Impact Report as a DataHub Context Document, linked to
-the affected table -- the permanent, per-instance detail layer alongside
-the ephemeral pending-review-* tag.
+the affected table -- the permanent detail layer alongside the ephemeral tag.
 
-Verified against the REAL save_document() signature (inspected directly
-from your installed datahub_agent_context package, not assumed):
-
-    save_document(
-        document_type: Literal['Insight','Decision','FAQ','Analysis',
-                                'Summary','Recommendation','Note','Context'],
-        title: str,
-        content: str,
-        urn: Optional[str] = None,
-        topics: Optional[List[str]] = None,
-        related_documents: Optional[List[str]] = None,
-        related_assets: Optional[List[str]] = None,
-    ) -> dict
-
-NOTE on document_type: DataHub's UI-level docs describe categories like
-"Runbook, FAQ, Policy, Decision Log" -- but those are NOT the literal
-values save_document() accepts. We use "Decision" (the closest real,
-confirmed value) since a PR Impact Report documents a decision point
-about a proposed schema change. This mapping is my best inference, not
-independently confirmed against the UI -- worth checking visually in
-DataHub after the first real write, same as we did for tags.
-
-Confirmed via docs.datahub.com: Context Documents work on SELF-HOSTED
-DataHub (not Cloud-only), and are created in PUBLISHED state by default.
+FIX: Removed attach_report_to_dataset_description() which would have
+OVERWRITTEN the dataset's real description with a migration report.
 """
 
 from typing import Optional, Dict, Any
@@ -45,11 +22,9 @@ def write_back_context_document(
     Args:
         table: table name, used in the document title.
         table_urn: dataset URN to link this document to (related_assets).
-        report_content: the full markdown report text (from
-            build_full_report()) -- saved as-is as the document content.
-        overall_severity: used in the title and topics for discoverability.
-        dry_run: if True (default), only prints what would happen, makes
-            NO live API call. Must be explicitly set to False to write.
+        report_content: the full markdown report text.
+        overall_severity: used in the title and topics.
+        dry_run: if True (default), only prints what would happen.
 
     Returns:
         The save_document() result dict if a real write happened, or a
@@ -73,7 +48,7 @@ def write_back_context_document(
             "related_assets": [table_urn],
         }
 
-    # Real write -- only reached when dry_run=False.
+    # Real write
     from datahub_agent_context.mcp_tools import save_document
     result = save_document(
         document_type="Decision",
@@ -88,7 +63,6 @@ def write_back_context_document(
 
 
 if __name__ == "__main__":
-    # Offline-safe test -- dry_run=True (default), no DataHub needed.
     sample_report = (
         "# PR Impact Report: `orders`\n\n"
         "## Column: `shipping_address`\n"
