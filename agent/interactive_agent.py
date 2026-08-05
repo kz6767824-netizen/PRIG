@@ -2,9 +2,11 @@
 agent/interactive_agent.py
 
 Interactive multi-turn agent for PR Impact Guardian (PRIG).
-Allows data engineers to interactively query impact analysis.
 
-FIX: imports updated to work with the hybrid report_builder.py format.
+FIX: the 'report' command now passes the already-fetched downstream_assets
+into build_full_report(), matching report_builder.py's restored optional
+parameter. This avoids a second, out-of-context DataHub call that would
+otherwise crash with "No DataHubClient in context".
 """
 
 import sys
@@ -54,11 +56,15 @@ def run_interactive_loop(table: str, table_urn: str, operations: list, downstrea
         elif "report" in q_lower:
             print("\n--- Generating Full PRIG Report ---")
             try:
+                # FIX: pass the already-fetched downstream_assets so this
+                # does NOT try to query DataHub again outside any active
+                # DataHubContext.
                 report = build_full_report(
                     table=table,
                     table_urn=table_urn,
                     operations=operations,
                     use_llm=False,
+                    downstream_assets=downstream_assets,
                 )
                 print(report)
             except Exception as err:
