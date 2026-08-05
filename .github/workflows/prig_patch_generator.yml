@@ -1,17 +1,17 @@
-name: PRIG Safe SQL Patch Generator
+name: PR Impact Guardian - Patch Generator
 
 on:
   pull_request:
     paths:
       - '**.sql'
       - 'migrations/**'
+  workflow_dispatch:
 
 jobs:
   generate-patch:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -19,39 +19,44 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install sqlparse
+      - name: Install sqlparse
+        run: pip install sqlparse
 
-      - name: Find changed SQL files
-        id: changed
+      - name: Find SQL files
+        id: find_sql
         run: |
-          echo "sql_files=$(git diff --name-only HEAD^ HEAD | grep '\.sql$' | tr '
-' ' ')" >> $GITHUB_OUTPUT
+          SQL_FILES=$(find . -name "*.sql" -type f | tr '\n' ' ')
+          echo "sql_files=${SQL_FILES}" >> "$GITHUB_OUTPUT"
+          echo "Found SQL files: ${SQL_FILES}"
 
       - name: Generate remediation patches
-        if: steps.changed.outputs.sql_files != ''
+        if: steps.find_sql.outputs.sql_files != ''
         run: |
           mkdir -p patches
-          for file in ${{ steps.changed.outputs.sql_files }}; do
-            python -c "
-import sys
-sys.path.insert(0, 'agent')
-from parse_migration import parse_migration
-from patch_generator import save_patch_file
+          python3 << 'PYEOF'
+          import sys
+          import os
+          sys.path.insert(0, 'agent')
+          from parse_migration import parse_migration
+          from patch_generator import save_patch_file
 
-with open('$file', 'r') as f:
-    sql = f.read()
+          for root, dirs, files in os.walk('.'):
+              for f in files:
+                  if not f.endswith('.sql'):
+                      continue
+                  path = os.path.join(root, f)
+                  with open(path, 'r') as file:
+                      sql = file.read()
+                  parsed = parse_migration(sql)
+                  table = parsed.get('table')
+                  ops = parsed.get('operations', [])
+                  if table and ops:
+                      patch_path = save_patch_file(table, ops, output_dir='patches')
+                      print(f"Generated patch: {patch_path}")
+          PYEOF
 
-parsed = parse_migration(sql)
-if parsed['table'] and parsed['operations']:
-    save_patch_file(parsed['table'], parsed['operations'], output_dir='patches')
-"
-          done
-
-      - name: Upload SQL Patch Artifact
-        if: steps.changed.outputs.sql_files != ''
+      - name: Upload patch artifacts
+        if: steps.find_sql.outputs.sql_files != ''
         uses: actions/upload-artifact@v4
         with:
           name: safe-migration-patches
