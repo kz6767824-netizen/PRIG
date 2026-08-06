@@ -14,6 +14,9 @@ permissions:
 jobs:
   impact-analysis:
     runs-on: ubuntu-latest
+    env:
+      DATAHUB_GMS_URL: ${{ secrets.DATAHUB_GMS_URL }}
+      DATAHUB_GMS_TOKEN: ${{ secrets.DATAHUB_GMS_TOKEN }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -25,8 +28,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install sqlparse
-        run: pip install sqlparse
+      - name: Install dependencies
+        run: pip install sqlparse requests
 
       - name: Find SQL files (excluding generated patches)
         id: find_sql
@@ -35,7 +38,7 @@ jobs:
           echo "sql_files=${SQL_FILES}" >> "$GITHUB_OUTPUT"
           echo "Found SQL files: ${SQL_FILES}"
 
-      - name: Run offline impact analysis
+      - name: Run impact analysis
         id: run_analysis
         if: steps.find_sql.outputs.sql_files != ''
         run: |
@@ -48,6 +51,53 @@ jobs:
           from parse_migration import parse_migration
           from severity import classify_migration
           from severity_rollup import compute_overall_severity
+
+          GMS_URL = os.environ.get("DATAHUB_GMS_URL", "").rstrip("/")
+          GMS_TOKEN = os.environ.get("DATAHUB_GMS_TOKEN", "")
+          LIVE_MODE = bool(GMS_URL and GMS_TOKEN)
+
+          def get_downstream_count(table, env="PROD", platform="postgres"):
+              """Live lineage lookup against DataHub via GraphQL. Returns 0
+              (offline fallback) if secrets aren't configured or the call fails
+              -- never raises, so the workflow degrades gracefully for forks
+              that don't have a DataHub instance/tunnel configured."""
+              if not LIVE_MODE:
+                  return 0
+              import requests
+              table_urn = f"urn:li:dataset:(urn:li:dataPlatform:{platform},{table},{env})"
+              query = """
+              query GetLineage($urn: String!) {
+                dataset(urn: $urn) {
+                  downstream: lineage(input: { direction: DOWNSTREAM }) {
+                    entities { urn type }
+                  }
+                }
+              }
+              """
+              try:
+                  resp = requests.post(
+                      f"{GMS_URL}/api/graphql",
+                      headers={
+                          "Authorization": f"Bearer {GMS_TOKEN}",
+                          "Content-Type": "application/json",
+                      },
+                      json={"query": query, "variables": {"urn": table_urn}},
+                      timeout=15,
+                  )
+                  resp.raise_for_status()
+                  data = resp.json()
+                  entities = (
+                      (data.get("data") or {})
+                      .get("dataset", {})
+                      .get("downstream", {})
+                      .get("entities", [])
+                      or []
+                  )
+                  print(f"[lineage] {table_urn}: {len(entities)} downstream entities")
+                  return len(entities)
+              except Exception as e:
+                  print(f"[lineage] WARNING: lookup failed for {table_urn}: {e}")
+                  return 0
 
           reports = []
           any_critical = False
@@ -66,8 +116,11 @@ jobs:
                   if not parsed.get('table'):
                       continue
 
+                  table = parsed['table']
                   ops = parsed['operations']
-                  downstream_lookup = {op.get('column'): 0 for op in ops if op.get('column')}
+
+                  downstream_count = get_downstream_count(table)
+                  downstream_lookup = {op.get('column'): downstream_count for op in ops if op.get('column')}
                   pii_lookup = {op.get('column'): False for op in ops if op.get('column')}
 
                   classified = classify_migration(ops, downstream_lookup, pii_lookup)
@@ -77,7 +130,7 @@ jobs:
                       any_critical = True
 
                   reports.append(f"## File: `{path}`")
-                  reports.append(f"**Table:** `{parsed['table']}`")
+                  reports.append(f"**Table:** `{table}`")
                   reports.append(f"**Overall Severity:** `{overall}`")
                   reports.append("")
                   reports.append("| Operation | Column | Severity |")
@@ -87,17 +140,20 @@ jobs:
                       reports.append(f"| {c['action']} | `{col}` | **{c['severity']}** |")
                   reports.append("")
 
-          note = (
-              "> **Note:** This CI check runs offline and cannot reach a live "
-              "DataHub instance from GitHub's cloud runners, so downstream lineage "
-              "counts are not available here -- severity reflects structural risk "
-              "only (type changes, table drops, ambiguous renames, PII overrides). "
-              "For full lineage-aware severity, including breaking column drops "
-              "with real downstream impact, run the PR Impact Guardian Streamlit "
-              "app against your live DataHub instance.\n"
-          )
+          if LIVE_MODE:
+              note = (
+                  "> **Note:** This report includes live downstream lineage counts "
+                  "from your DataHub instance.\n"
+              )
+          else:
+              note = (
+                  "> **Note:** This CI check ran offline (no DataHub connection "
+                  "configured), so downstream lineage counts are not available -- "
+                  "severity reflects structural risk only (type changes, table "
+                  "drops, ambiguous renames, PII overrides).\n"
+              )
 
-          header = "# PRIG Offline Impact Report\n\n" + note + "\n"
+          header = "# PRIG Impact Report\n\n" + note + "\n"
           body = "\n\n".join(reports) if reports else "_No recognizable SQL operations found._"
 
           os.makedirs('prig-reports', exist_ok=True)
@@ -108,7 +164,7 @@ jobs:
               gh_out.write(f"any_critical={'true' if any_critical else 'false'}\n")
 
           print("Report generated at prig-reports/offline-impact-report.md")
-          print(f"any_critical={any_critical}")
+          print(f"any_critical={any_critical}, live_mode={LIVE_MODE}")
           PYEOF
 
       - name: Upload report artifact
