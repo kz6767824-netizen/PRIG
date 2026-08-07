@@ -5,10 +5,6 @@
 -- NOTE: Review and adapt column lists before running in production.
 -- ======================================================================
 
--- PHASE 1: Safe additive changes (apply immediately)
-
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS loyalty_points INT;
-
 -- PHASE 2: Safe deprecation for column 'shipping_address'
 
 ALTER TABLE orders RENAME COLUMN shipping_address TO shipping_address_deprecated;

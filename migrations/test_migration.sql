@@ -1,4 +1,4 @@
-#3 rd retest
+#now after it restart rd retest
 ALTER TABLE orders
   DROP COLUMN shipping_address,
   ADD COLUMN loyalty_points INT;
