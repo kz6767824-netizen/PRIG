@@ -1,3 +1,4 @@
+import streamlit.components.v1 as components
 import streamlit as st
 import sys
 import os
@@ -15,6 +16,18 @@ from severity_rollup import compute_overall_severity
 from write_back_tag import write_back_tag
 from write_back_context_document import write_back_context_document
 
+from lineage_graph import build_mermaid_graph
+
+DATAHUB_TOKEN = os.environ.get("DATAHUB_TOKEN", "")
+def render_mermaid(mermaid_code: str, height: int = 320):
+    html = f"""
+    <div class="mermaid">
+    {mermaid_code}
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({{ startOnLoad: true }});</script>
+    """
+    components.html(html, height=height, scrolling=True)
 st.set_page_config(page_title="PR Impact Guardian", layout="centered")
 st.title("🛡️ PR Impact Guardian")
 st.caption("One bad ALTER TABLE can silently break every downstream dashboard. Don't let a DROP COLUMN become a production incident. This agent stops it before merge.")
@@ -63,7 +76,7 @@ with st.expander("🧹 Tag management"):
     if st.button("Clear all review tags from this dataset"):
         with st.spinner("Removing tags..."):
             try:
-                client = DataHubClient(server="http://localhost:8081", token="")
+                client = DataHubClient(server="http://localhost:8081", token=DATAHUB_TOKEN)
                 with DataHubContext(client):
                     from datahub_agent_context.mcp_tools import remove_tags
                     remove_tags(
@@ -114,7 +127,7 @@ if analyze_clicked:
     spinner_msg = "Analyzing against DataHub" + (" (using LLM for explanations)..." if use_llm else "...")
     with st.spinner(spinner_msg):
         try:
-            client = DataHubClient(server="http://localhost:8081", token="")
+            client = DataHubClient(server="http://localhost:8081", token=DATAHUB_TOKEN)
             with DataHubContext(client):
                 # Build report (includes live lineage + severity per operation)
                 report = build_full_report(
@@ -179,7 +192,8 @@ if analyze_clicked:
     # Full report
     st.markdown("### Impact Report")
     st.markdown(report)
-
+    st.markdown("### Downstream Lineage")
+    render_mermaid(build_mermaid_graph(table_name, downstream_assets))
     # Technical details (collapsible)
     if show_details:
         with st.expander("Raw technical output"):

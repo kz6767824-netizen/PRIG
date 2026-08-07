@@ -64,9 +64,9 @@ def get_downstream_assets(table_urn: str) -> List[Dict[str, Any]]:
         assets.append({
             "name": entity.get("name") or entity.get("urn", "unknown"),
             "type": entity.get("type", "unknown"),
+            "urn": entity.get("urn"),
         })
     return assets
-
 
 def get_pii_flag_for_column(table_urn: str, column: str) -> bool:
     return False
