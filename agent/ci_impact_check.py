@@ -105,7 +105,7 @@ for root, dirs, files in os.walk('.'):
                 from report_builder import build_full_report
 
                 with DataHubContext(live_client):
-                    tag_result = write_back_tag(table_urn, overall, dry_run=False)
+                    tag_result = write_back_tag(table_urn, overall, dry_run=False, server=GMS_URL, token=GMS_TOKEN)
                     if tag_result:
                         reports.append(f"> \U0001F3F7\uFE0F Tag written to DataHub for `{table}` (severity: {overall}).")
 

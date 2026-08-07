@@ -20,19 +20,9 @@ def write_back_tag(
     table_urn: str,
     overall_severity: str,
     dry_run: bool = True,
+    server: str = "http://localhost:8081",
+    token: str = "",
 ) -> Optional[Dict[str, Any]]:
-    """
-    Args:
-        table_urn: the dataset URN to tag (whole-entity).
-        overall_severity: result of compute_overall_severity().
-        dry_run: if True (default), only prints what would happen and
-            makes NO live API call.
-
-    Returns:
-        The add_tags() result dict if a real write happened, or a dict
-        describing the dry-run action if not, or None if severity is
-        Safe/Low (no write-back needed at all).
-    """
     tag_urn = SEVERITY_TO_TAG.get(overall_severity)
 
     if tag_urn is None:
@@ -46,12 +36,11 @@ def write_back_tag(
               f"No live write performed. Set dry_run=False to actually write.")
         return {"dry_run": True, "would_apply_tag": tag_urn, "entity_urn": table_urn}
 
-    # Real write -- ensure ONLY this specific tag exists first, then apply it.
     from ensure_tags_exist import ensure_tags_exist
     from datahub_agent_context.mcp_tools import add_tags
 
-    tag_name = tag_urn.split(":")[-1]  # "urn:li:tag:pending-review-breaking" -> "pending-review-breaking"
-    ensure_tags_exist(tag_names=[tag_name])
+    tag_name = tag_urn.split(":")[-1]
+    ensure_tags_exist(tag_names=[tag_name], server=server, token=token)
 
     result = add_tags(
         tag_urns=[tag_urn],

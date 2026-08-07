@@ -217,7 +217,7 @@ if analyze_clicked:
         with DataHubContext(client):
             with st.spinner("Writing tag to DataHub (auto-creating the tag if needed)..."):
                 try:
-                    tag_result = write_back_tag(dataset_urn, overall, dry_run=False)
+                    tag_result = write_back_tag(dataset_urn, overall, dry_run=False, server="http://localhost:8081", token=DATAHUB_TOKEN)
                     if tag_result is None:
                         st.info(f"Overall severity is '{overall}' -- below the tagging threshold, no tag written.")
                     elif tag_result.get("success"):
