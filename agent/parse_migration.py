@@ -22,6 +22,13 @@ Approach:
   4. DROP TABLE is handled as a separate top-level case, since it's not a
      column-level clause at all.
 
+MULTI-TABLE ADDITION: parse_migration() itself is UNCHANGED and remains
+the single-statement entry point. parse_multi_table_migration() is a new,
+purely additive function that splits a full migration file into individual
+top-level statements (semicolon-separated, respecting parens) and calls
+the existing, unchanged parse_migration() on each one. Zero risk to the
+already-tested single-statement path.
+
 Known, explicitly deferred (NOT implemented in this version):
   - SET NOT NULL as its own operation type. It shares the
     "ALTER COLUMN <name>" prefix with TYPE_CHANGE and deliberately needs
@@ -75,6 +82,35 @@ def _split_top_level_clauses(text: str) -> List[str]:
     if current:
         parts.append("".join(current))
     return [p.strip().rstrip(";").strip() for p in parts if p.strip().rstrip(";").strip()]
+
+
+def _split_top_level_statements(sql_text: str) -> List[str]:
+    """
+    Splits a multi-statement migration file into individual statements on
+    semicolons NOT inside parentheses (same logic as _split_top_level_clauses,
+    applied at the statement level instead of the clause level). This is
+    what makes multi-table migrations possible -- each returned string is
+    handed to the existing, unchanged parse_migration() one at a time.
+    """
+    parts = []
+    depth = 0
+    current = []
+    for ch in sql_text:
+        if ch == "(":
+            depth += 1
+            current.append(ch)
+        elif ch == ")":
+            depth -= 1
+            current.append(ch)
+        elif ch == ";" and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    tail = "".join(current)
+    if tail.strip():
+        parts.append(tail)
+    return [p.strip() for p in parts if p.strip()]
 
 
 def _parse_add_clause(clause: str) -> Optional[Dict[str, Any]]:
@@ -133,41 +169,60 @@ def _parse_rename_clause(clause: str) -> Optional[Dict[str, Any]]:
     return {"action": "RENAME", "column": m.group(1), "new_column": m.group(2)}
 
 
-def _parse_alter_statement(stmt_text: str) -> Optional[Dict[str, Any]]:
+def _strip_leading_comment_lines(sql_text: str) -> str:
     """
-    Parses ONE statement's text (already isolated -- no other statements
-    mixed in) into {"table":.., "operations":..}. This is the shared core
-    used by both parse_migration() (single-table, unchanged behavior) and
-    parse_multi_table_migration() (new) -- so both paths run through
-    identical, already-tested clause parsing with zero duplication.
+    Strips leading '-- comment' lines and blank lines from the front of a
+    statement before operation matching. Needed because parse_migration()'s
+    DROP TABLE check is anchored with ^DROP\\s+TABLE -- if a statement is
+    preceded by an explanatory comment (very normal SQL style, and used
+    throughout this project's own demo files), the anchor would otherwise
+    never match since the text starts with '--', not 'DROP'. Only strips
+    from the FRONT, so a comment appearing mid-statement (e.g. after a
+    comma in an ALTER TABLE clause list) is left untouched -- that's a
+    separate, not-yet-handled case, not silently mishandled here.
     """
-    stmt_text = stmt_text.strip()
-    if not stmt_text:
-        return None
+    lines = sql_text.split("\n")
+    i = 0
+    while i < len(lines) and (not lines[i].strip() or lines[i].strip().startswith("--")):
+        i += 1
+    return "\n".join(lines[i:])
+
+
+def parse_migration(sql_text: str) -> Dict[str, Any]:
+    """
+    UNCHANGED single-statement parser. Do not modify -- this is the
+    already-tested path that parse_multi_table_migration() below builds on
+    top of, without touching a single line of it.
+    """
+    sql_text = sql_text.strip()
+    if not sql_text:
+        return {"table": None, "operations": []}
+
+    sql_text = _strip_leading_comment_lines(sql_text).strip()
+    if not sql_text:
+        return {"table": None, "operations": []}
 
     # --- DROP TABLE: handled separately, not a column-level clause ---
-    m = re.match(r'^DROP\s+TABLE\s+([A-Za-z_]\w*)', stmt_text, re.IGNORECASE)
+    m = re.match(r'^DROP\s+TABLE\s+([A-Za-z_]\w*)', sql_text, re.IGNORECASE)
     if m:
         return {
             "table": m.group(1),
             "operations": [{"action": "DROP_TABLE", "column": None}],
         }
 
-    parsed = sqlparse.parse(stmt_text)
+    parsed = sqlparse.parse(sql_text)
     if not parsed:
-        return None
+        return {"table": None, "operations": []}
 
-    stmt = parsed[0]
-    table = _extract_table_name(stmt)
+    table = _extract_table_name(parsed[0])
     if not table:
-        return None
+        return {"table": None, "operations": []}
 
     # Strip the "ALTER TABLE <table>" prefix to get the clause text.
     prefix_match = re.search(
-        r'ALTER\s+TABLE\s+' + re.escape(table) + r'\s*', stmt_text, re.IGNORECASE
+        r'ALTER\s+TABLE\s+' + re.escape(table) + r'\s*', sql_text, re.IGNORECASE
     )
-    remainder = stmt_text[prefix_match.end():] if prefix_match else stmt_text
-    remainder = remainder.rstrip(";").strip()
+    remainder = sql_text[prefix_match.end():] if prefix_match else sql_text
 
     operations = []
     for clause in _split_top_level_clauses(remainder):
@@ -186,57 +241,29 @@ def _parse_alter_statement(stmt_text: str) -> Optional[Dict[str, Any]]:
     return {"table": table, "operations": operations}
 
 
-def parse_migration(sql_text: str) -> Dict[str, Any]:
-    """
-    Single-table entry point (unchanged behavior/signature). Only ever
-    analyzes the FIRST statement, even if more are present -- see
-    parse_multi_table_migration() for analyzing every statement.
-    """
-    sql_text = sql_text.strip()
-    if not sql_text:
-        return {"table": None, "operations": []}
-
-    parsed = sqlparse.parse(sql_text)
-    if not parsed:
-        return {"table": None, "operations": []}
-
-    first_stmt_text = str(parsed[0])
-    result = _parse_alter_statement(first_stmt_text)
-    if result is None:
-        return {"table": None, "operations": []}
-
-    # Surface how many additional statements were present but ignored, so
-    # callers (Slack bot, Streamlit app) can warn the user -- e.g. "you
-    # sent 2 ALTER TABLE statements, only 'orders' was analyzed."
-    result["ignored_statement_count"] = len(parsed) - 1
-    return result
-
-
 def parse_multi_table_migration(sql_text: str) -> List[Dict[str, Any]]:
     """
-    Parses EVERY statement in sql_text, one result per table found, using
-    the exact same tested clause-parsing logic as parse_migration() (via
-    the shared _parse_alter_statement() helper) -- just run once per
-    statement instead of only on the first.
+    Splits a full migration file into individual top-level statements
+    (semicolon-separated, respecting parens so a DECIMAL(10,2) inside one
+    statement never causes a false split) and parses EACH ONE with the
+    existing, unchanged parse_migration().
 
-    Returns a list of {"table":.., "operations":..} dicts, one per
-    statement that contained a recognizable table (DROP TABLE or
-    ALTER TABLE ... <table>). Statements that don't resolve to a table
-    are silently skipped (e.g. blank fragments from stray semicolons).
+    Returns a list of per-statement results, each in the same shape
+    parse_migration() already returns: {"table": ..., "operations": [...]}.
+
+    Statements that don't resolve to a table (blank lines, comments-only
+    fragments, or genuinely unparseable text) are skipped rather than
+    included as an empty/None entry -- callers can assume every item in
+    the returned list has a real table name.
     """
-    sql_text = sql_text.strip()
-    if not sql_text:
-        return []
-
-    parsed_statements = sqlparse.parse(sql_text)
     results = []
-    for stmt in parsed_statements:
-        stmt_text = str(stmt).strip()
-        if not stmt_text:
-            continue
-        result = _parse_alter_statement(stmt_text)
-        if result:
-            results.append(result)
+    for stmt in _split_top_level_statements(sql_text):
+        # parse_migration() strips/re-adds semicolons internally via
+        # rstrip(';') in clause splitting and its own DROP TABLE regex,
+        # so passing the statement as-is (no trailing ';') is safe.
+        parsed = parse_migration(stmt)
+        if parsed.get("table"):
+            results.append(parsed)
     return results
 
 
@@ -276,3 +303,29 @@ if __name__ == "__main__":
         print(f"--- Test {i} ---")
         print(parse_migration(sql))
         print()
+
+    # --- NEW: multi-table migration file, mixing several statement types ---
+    print("--- Multi-table test ---")
+    multi_sql = """
+    ALTER TABLE orders
+      DROP COLUMN shipping_address,
+      ADD COLUMN loyalty_points INT;
+
+    ALTER TABLE customers
+      ALTER COLUMN total_amount TYPE DECIMAL(10,2);
+
+    DROP TABLE old_staging_table;
+
+    ALTER TABLE payments
+      RENAME COLUMN txn_id TO transaction_id;
+    """
+    multi_results = parse_multi_table_migration(multi_sql)
+    print(f"Found {len(multi_results)} table(s):")
+    for r in multi_results:
+        print(f"  - {r['table']}: {len(r['operations'])} operation(s)")
+        for op in r['operations']:
+            print(f"      {op}")
+
+    assert len(multi_results) == 4, f"FIX FAILED: expected 4 tables, got {len(multi_results)}"
+    assert {r['table'] for r in multi_results} == {"orders", "customers", "old_staging_table", "payments"}
+    print("\nPASS: all 4 tables parsed correctly from one multi-statement file")

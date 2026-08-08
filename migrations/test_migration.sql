@@ -4,3 +4,4 @@ ALTER TABLE orders
 ALTER TABLE customers
   DROP COLUMN phone;
   
+  

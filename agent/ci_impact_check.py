@@ -16,6 +16,10 @@ returns the FIRST table in a .sql file -- a file with two semicolon-
 separated ALTER TABLE statements would silently only get the first one
 checked. Now uses parse_multi_table_migration() and loops every table
 found in each file, so nothing in a koza's .sql files goes unchecked.
+
+SOURCE TAGGING ADDITION: the combined Context Document write-back now
+passes source="github-actions" so the saved document records that it
+came from an automated CI run, not a manual Streamlit/Slack check.
 """
 
 import os
@@ -148,7 +152,7 @@ if mode == "live" and context_doc_entries:
 
         with DataHubContext(live_client):
             doc_result = write_back_combined_context_document(
-                tables=context_doc_entries, dry_run=False
+                tables=context_doc_entries, dry_run=False, source="github-actions"
             )
         if doc_result:
             table_list = ", ".join(f"`{t['table']}`" for t in context_doc_entries)

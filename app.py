@@ -232,6 +232,7 @@ if analyze_clicked:
                         report_content=only["report"],
                         overall_severity=only["overall"],
                         dry_run=False,
+                        source="streamlit",
                     )
                     context_doc_mode = "single"
                 else:
@@ -245,7 +246,7 @@ if analyze_clicked:
                         for d in per_table_data.values()
                     ]
                     context_doc_result = write_back_combined_context_document(
-                        tables_payload, dry_run=False,
+                        tables_payload, dry_run=False, source="streamlit",
                     )
                     context_doc_mode = "combined"
             except Exception as e:
@@ -440,6 +441,7 @@ if st.session_state.get("koza_per_table_data"):
                                     report_content=d["report"],
                                     overall_severity=d["overall"],
                                     dry_run=False,
+                                    source="streamlit",
                                 )
                                 if sep_result and sep_result.get("success"):
                                     sep_urn = sep_result.get("urn", "")
