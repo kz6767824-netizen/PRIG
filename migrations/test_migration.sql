@@ -1,4 +1,3 @@
-# 1 wa test number 2 with koza check now
 ALTER TABLE orders
   DROP COLUMN loyalty_points,
   ADD COLUMN referral_code VARCHAR(20);
