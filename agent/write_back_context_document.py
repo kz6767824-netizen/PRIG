@@ -1,7 +1,7 @@
 """
 write_back_context_document.py
 
-Saves the full PR Impact Report as a DataHub Context Document, linked to
+Saves the full PR Impact Report(koza) as a DataHub Context Document, linked to
 the affected table -- the permanent detail layer alongside the ephemeral tag.
 
 FIX: Removed attach_report_to_dataset_description() which would have
@@ -99,12 +99,12 @@ def write_back_combined_context_document(
     severity_rank = {"Critical": 0, "Breaking": 1, "Low": 2, "Safe": 3}
     worst_severity = min(severities, key=lambda s: severity_rank.get(s, 99))
 
-    title = f"PR Impact Report: {', '.join(table_names)} ({worst_severity})"
-    topics = ["pr-impact-guardian", "schema-change", "multi-table"]
+    title = f"koza Impact Report: {', '.join(table_names)} ({worst_severity})"
+    topics = ["koza-impact-guardian", "schema-change", "multi-table"]
     topics += sorted({s.lower() for s in severities})
 
     content_sections = [
-        f"# PR Impact Report -- Combined ({len(tables)} tables)\n",
+        f"# koza Impact Report -- Combined ({len(tables)} tables)\n",
         f"**Tables in this migration:** {', '.join(table_names)}\n",
         f"**Highest severity:** `{worst_severity}`\n",
         "\n---\n",
@@ -145,7 +145,7 @@ def write_back_combined_context_document(
 
 if __name__ == "__main__":
     sample_report = (
-        "# PR Impact Report: `orders`\n\n"
+        "# koza Impact Report: `orders`\n\n"
         "## Column: `shipping_address`\n"
         "Severity: Breaking\n"
         "Downstream impact (1 asset): daily_revenue_dashboard\n"

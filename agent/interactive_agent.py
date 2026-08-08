@@ -1,7 +1,7 @@
 """
 agent/interactive_agent.py
 
-Interactive multi-turn agent for PR Impact Guardian (PRIG).
+Interactive multi-turn agent for PR Impact Guardian (koza).
 
 FIX: the 'report' command now passes the already-fetched downstream_assets
 into build_full_report(), matching report_builder.py's restored optional
@@ -50,11 +50,11 @@ def run_interactive_loop(table: str, table_urn: str, operations: list, downstrea
         q_lower = query.lower()
 
         if q_lower in ["exit", "quit", "q"]:
-            print("👋 Ending PRIG Interactive Session.")
+            print("👋 Ending koza Interactive Session.")
             break
 
         elif "report" in q_lower:
-            print("\n--- Generating Full PRIG Report ---")
+            print("\n--- Generating Full koza Report ---")
             try:
                 # FIX: pass the already-fetched downstream_assets so this
                 # does NOT try to query DataHub again outside any active
@@ -71,7 +71,7 @@ def run_interactive_loop(table: str, table_urn: str, operations: list, downstrea
                 print(f"❌ Error generating report: {err}")
 
         elif "downstream" in q_lower or "break" in q_lower or "who" in q_lower:
-            print(f"\n🤖 PRIG Answer:")
+            print(f"\n🤖 koza Answer:")
             if not downstream_assets:
                 print(f"No active downstream consumers found in DataHub for table '{table}'.")
             else:
@@ -82,20 +82,20 @@ def run_interactive_loop(table: str, table_urn: str, operations: list, downstrea
                     print(f"  - {name} ({asset_type})")
 
         elif "fix" in q_lower or "remediation" in q_lower or "safe" in q_lower:
-            print(f"\n🤖 PRIG Answer:")
+            print(f"\n🤖 koza Answer:")
             print("Safe migration strategies:")
             print("1. Keep the current column live in production.")
             lines.append("2. Rename it to `*_deprecated` and create a backward-compatible view.")
             print("3. Deprecate the column in DataHub and notify asset owners before final removal.")
 
         elif "severity" in q_lower or "risk" in q_lower:
-            print(f"\n🤖 PRIG Answer:")
+            print(f"\n🤖 koza Answer:")
             print(f"Current migration severity: **{overall_severity}**.")
             for c in classified:
                 print(f"  - Column '{c.get('column')}': {c.get('severity')} ({c.get('action')})")
 
         elif "patch" in q_lower or "generate" in q_lower:
-            print(f"\n🤖 PRIG Answer:")
+            print(f"\n🤖 koza Answer:")
             from patch_generator import save_patch_file
             try:
                 patch_path = save_patch_file(table, operations)
@@ -106,14 +106,14 @@ def run_interactive_loop(table: str, table_urn: str, operations: list, downstrea
             except Exception as e:
                 print(f"❌ Could not generate patch: {e}")
         else:
-            print(f"\n🤖 PRIG Answer:")
+            print(f"\n🤖 koza Answer:")
             print(f"Migration on '{table}': {len(operations)} operations, overall [{overall_severity}].")
             print("Type 'report' for full details, 'fix' for mitigation strategies, or 'patch' to generate SQL.")
 
 
 def interactive_session(sql_text: str, env: str = "PROD"):
     print("=" * 70)
-    print("🤖 PR Impact Guardian (PRIG) — Interactive Session")
+    print("🤖 PR Impact Guardian (koza) — Interactive Session")
     print("=" * 70)
 
     parsed = parse_migration(sql_text)

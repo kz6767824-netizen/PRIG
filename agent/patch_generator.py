@@ -1,7 +1,7 @@
 """
 agent/patch_generator.py
 
-Automated Remediation SQL Patch Generator for PR Impact Guardian (PRIG).
+Automated Remediation SQL Patch Generator for PR Impact Guardian (koza).
 Generates ready-to-run, non-breaking SQL patches.
 
 FIX: Uses rename-then-view pattern instead of SELECT *, NULL AS col
@@ -25,7 +25,7 @@ def generate_sql_patch(table: str, operations: List[Dict[str, Any]]) -> str:
 
     lines = [
         "-- ======================================================================",
-        "-- PR IMPACT GUARDIAN (PRIG) - AUTOMATED SAFE REMEDIATION PATCH",
+        "-- PR IMPACT GUARDIAN (koza) - AUTOMATED SAFE REMEDIATION PATCH",
         f"-- Target Table: {table}",
         "-- Pattern: Rename-Then-View (preserves data, keeps old names working)",
         "-- NOTE: Review and adapt column lists before running in production.",

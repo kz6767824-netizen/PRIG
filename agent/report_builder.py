@@ -212,7 +212,7 @@ def build_full_report(
     classified = classify_migration(operations, downstream_lookup, pii_lookup)
     overall = compute_overall_severity(classified)
 
-    sections = [f"# PR Impact Report: `{table}`\n"]
+    sections = [f"# koza Impact Report: `{table}`\n"]
     sections.append(f"**Overall Severity:** `{overall}`\n")
 
     sections.append("### Summary\n")

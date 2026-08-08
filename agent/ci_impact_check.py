@@ -15,7 +15,7 @@ MULTI-TABLE ADDITION: previously used parse_migration(), which only ever
 returns the FIRST table in a .sql file -- a file with two semicolon-
 separated ALTER TABLE statements would silently only get the first one
 checked. Now uses parse_multi_table_migration() and loops every table
-found in each file, so nothing in a PR's .sql files goes unchecked.
+found in each file, so nothing in a koza's .sql files goes unchecked.
 """
 
 import os
@@ -177,11 +177,11 @@ else:
         "section per table.\n"
     )
 
-header = "# PRIG Impact Report\n\n" + note + "\n"
+header = "# koza Impact Report\n\n" + note + "\n"
 body = "\n\n".join(reports) if reports else "_No recognizable SQL operations found._"
 
-os.makedirs('prig-reports', exist_ok=True)
-with open('prig-reports/offline-impact-report.md', 'w', encoding='utf-8') as out:
+os.makedirs('koza-reports', exist_ok=True)
+with open('koza-reports/offline-impact-report.md', 'w', encoding='utf-8') as out:
     out.write(header + body)
 
 github_output = os.environ.get('GITHUB_OUTPUT')

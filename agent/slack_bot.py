@@ -1,16 +1,16 @@
 """
 agent/slack_bot.py
 
-Slack bot for PR Impact Guardian (PRIG). Listens for @mentions over Socket
+Slack bot for PR Impact Guardian (koza). Listens for @mentions over Socket
 Mode. Two analysis modes:
 
   SINGLE-TABLE (unchanged from before):
-    @PRIG analyze ALTER TABLE orders DROP COLUMN shipping_address;
-    @PRIG check ALTER TABLE orders DROP COLUMN shipping_address;
+    @koza analyze ALTER TABLE orders DROP COLUMN shipping_address;
+    @koza check ALTER TABLE orders DROP COLUMN shipping_address;
   Follow-ups: report | downstream | fix | patch | severity
 
   MULTI-TABLE + MULTI-HOP (new):
-    @PRIG multi ALTER TABLE orders DROP COLUMN x; ALTER TABLE customers DROP COLUMN y;
+    @koza multi ALTER TABLE orders DROP COLUMN x; ALTER TABLE customers DROP COLUMN y;
   Analyzes every table in the pasted SQL independently, traverses lineage
   2 hops deep (not just direct dependents), and flags when two tables in
   the SAME migration both feed the same downstream dashboard.
@@ -18,7 +18,7 @@ Mode. Two analysis modes:
   routed to the multi-table formatter based on which kind of session is
   active in this channel)
 
-  Also: @PRIG notify <team> that <message>
+  Also: @koza notify <team> that <message>
 
 Requires SLACK_BOT_TOKEN (xoxb-...) and SLACK_APP_TOKEN (xapp-...) to be set
 as environment variables before running. DATAHUB_GMS_URL and DATAHUB_TOKEN
@@ -54,7 +54,7 @@ SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "")
 DATAHUB_GMS_URL = os.environ.get("DATAHUB_GMS_URL", "http://localhost:8081")
 DATAHUB_TOKEN = os.environ.get("DATAHUB_TOKEN", "")
-MULTI_HOP_DEPTH = int(os.environ.get("PRIG_MULTI_HOP_DEPTH", "2"))
+MULTI_HOP_DEPTH = int(os.environ.get("koza_MULTI_HOP_DEPTH", "2"))
 
 if not SLACK_BOT_TOKEN or not SLACK_APP_TOKEN:
     raise SystemExit("Set SLACK_BOT_TOKEN and SLACK_APP_TOKEN before running this script.")
@@ -425,7 +425,7 @@ def handle_mention(event, say):
         parts = text.split(None, 1)
         sql_text = parts[1] if len(parts) > 1 else ""
         if not sql_text.strip():
-            say("Send SQL after `multi`, e.g. `@PRIG multi ALTER TABLE orders DROP COLUMN x; ALTER TABLE customers DROP COLUMN y;`")
+            say("Send SQL after `multi`, e.g. `@koza multi ALTER TABLE orders DROP COLUMN x; ALTER TABLE customers DROP COLUMN y;`")
             return
         say("🔍 Analyzing all tables (this can take a bit longer -- multi-hop lineage means several DataHub queries)...")
         session, summary = analyze_multi_table(sql_text)
@@ -440,7 +440,7 @@ def handle_mention(event, say):
         parts = text.split(None, 1)
         sql_text = parts[1] if len(parts) > 1 else ""
         if not sql_text.strip():
-            say("Send SQL after `analyze`, e.g. `@PRIG analyze ALTER TABLE orders DROP COLUMN shipping_address;`")
+            say("Send SQL after `analyze`, e.g. `@koza analyze ALTER TABLE orders DROP COLUMN shipping_address;`")
             return
         session, summary = analyze_sql(sql_text)
         if session is None:
@@ -453,8 +453,8 @@ def handle_mention(event, say):
     session = sessions.get(channel)
     if not session:
         say(
-            "No active migration in this channel yet. Start with `@PRIG analyze <SQL>` "
-            "(one table) or `@PRIG multi <SQL>` (multiple tables)."
+            "No active migration in this channel yet. Start with `@koza analyze <SQL>` "
+            "(one table) or `@koza multi <SQL>` (multiple tables)."
         )
         return
 
@@ -468,6 +468,6 @@ def handle_mention(event, say):
 
 
 if __name__ == "__main__":
-    print("⚡️ PRIG Slack bot starting (Socket Mode)...")
+    print("⚡️ koza Slack bot starting (Socket Mode)...")
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()

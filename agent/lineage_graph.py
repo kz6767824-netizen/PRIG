@@ -4,9 +4,9 @@ lineage_graph.py
 Builds a Mermaid flowchart string from a table name and its downstream
 assets (as returned by report_builder.get_downstream_assets()). Shared
 by both the Streamlit app and the GitHub Action, so the graph rendered
-in a PR comment matches the one rendered in the live demo.
+in a koza comment matches the one rendered in the live demo.
 
-GitHub renders ```mermaid fenced blocks natively in PR comments and
+GitHub renders ```mermaid fenced blocks natively in koza comments and
 markdown files -- no image generation needed. Streamlit does NOT render
 Mermaid natively, so app.py loads mermaid.js from CDN via
 streamlit.components.v1.html to render the same string.
