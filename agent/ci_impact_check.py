@@ -10,6 +10,12 @@ Falls back to offline mode (severity via structural risk only, no
 lineage, no write-back) if DATAHUB_GMS_URL / DATAHUB_GMS_TOKEN aren't
 set or the connection fails -- never raises, so forks without a
 DataHub tunnel configured still get a useful check.
+
+MULTI-TABLE ADDITION: previously used parse_migration(), which only ever
+returns the FIRST table in a .sql file -- a file with two semicolon-
+separated ALTER TABLE statements would silently only get the first one
+checked. Now uses parse_multi_table_migration() and loops every table
+found in each file, so nothing in a PR's .sql files goes unchecked.
 """
 
 import os
@@ -17,7 +23,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from parse_migration import parse_migration
+from parse_migration import parse_multi_table_migration
 from severity import classify_migration
 from severity_rollup import compute_overall_severity
 from lineage_graph import build_mermaid_graph
@@ -50,91 +56,101 @@ for root, dirs, files in os.walk('.'):
         with open(path, 'r') as file:
             sql = file.read()
 
-        parsed = parse_migration(sql)
-        if not parsed.get('table'):
+        table_parses = parse_multi_table_migration(sql)
+        if not table_parses:
             continue
 
-        table = parsed['table']
-        ops = parsed['operations']
-        table_urn = f"urn:li:dataset:(urn:li:dataPlatform:postgres,{table},PROD)"
-        downstream_assets = []
+        if len(table_parses) > 1:
+            table_names = ", ".join(f"`{tp['table']}`" for tp in table_parses)
+            reports.append(f"## File: `{path}` — {len(table_parses)} tables detected: {table_names}\n")
+        else:
+            reports.append(f"## File: `{path}`")
 
-        if mode == "live":
-            try:
-                from datahub_agent_context.context import DataHubContext
-                from report_builder import get_downstream_assets
-                with DataHubContext(live_client):
-                    downstream_assets = get_downstream_assets(table_urn)
-            except Exception as e:
-                print(f"[ci_impact_check] Lineage lookup failed for {table}: {e}")
-                downstream_assets = []
+        for tp in table_parses:
+            table = tp['table']
+            ops = tp['operations']
+            table_urn = f"urn:li:dataset:(urn:li:dataPlatform:postgres,{table},PROD)"
+            downstream_assets = []
 
-        downstream_count = len(downstream_assets)
-        downstream_lookup = {op.get('column'): downstream_count for op in ops if op.get('column')}
-        pii_lookup = {op.get('column'): False for op in ops if op.get('column')}
+            if mode == "live":
+                try:
+                    from datahub_agent_context.context import DataHubContext
+                    from report_builder import get_downstream_assets
+                    with DataHubContext(live_client):
+                        downstream_assets = get_downstream_assets(table_urn)
+                except Exception as e:
+                    print(f"[ci_impact_check] Lineage lookup failed for {table}: {e}")
+                    downstream_assets = []
 
-        classified = classify_migration(ops, downstream_lookup, pii_lookup)
-        overall = compute_overall_severity(classified)
+            downstream_count = len(downstream_assets)
+            downstream_lookup = {op.get('column'): downstream_count for op in ops if op.get('column')}
+            pii_lookup = {op.get('column'): False for op in ops if op.get('column')}
 
-        if any(c['severity'] == 'Critical' for c in classified):
-            any_critical = True
+            classified = classify_migration(ops, downstream_lookup, pii_lookup)
+            overall = compute_overall_severity(classified)
 
-        reports.append(f"## File: `{path}`")
-        reports.append(f"**Table:** `{table}`")
-        reports.append(f"**Mode:** `{mode}`" + (f" (downstream assets: {downstream_count})" if mode == "live" else ""))
-        reports.append(f"**Overall Severity:** `{overall}`")
-        reports.append("")
-        reports.append("| Operation | Column | Severity |")
-        reports.append("|---|---|---|")
-        for c in classified:
-            col = c.get('column', 'N/A')
-            reports.append(f"| {c['action']} | `{col}` | **{c['severity']}** |")
-        reports.append("")
+            if any(c['severity'] == 'Critical' for c in classified):
+                any_critical = True
 
-        reports.append("### Downstream Lineage")
-        reports.append("```mermaid")
-        reports.append(build_mermaid_graph(table, downstream_assets))
-        reports.append("```")
-        reports.append("")
+            reports.append(f"### Table: `{table}`")
+            reports.append(f"**Mode:** `{mode}`" + (f" (downstream assets: {downstream_count})" if mode == "live" else ""))
+            reports.append(f"**Overall Severity:** `{overall}`")
+            reports.append("")
+            reports.append("| Operation | Column | Severity |")
+            reports.append("|---|---|---|")
+            for c in classified:
+                col = c.get('column', 'N/A')
+                reports.append(f"| {c['action']} | `{col}` | **{c['severity']}** |")
+            reports.append("")
 
-        if mode == "live" and overall in ("Breaking", "Critical"):
-            try:
-                from datahub_agent_context.context import DataHubContext
-                from write_back_tag import write_back_tag
-                from write_back_context_document import write_back_context_document
-                from report_builder import build_full_report
+            reports.append("#### Downstream Lineage")
+            reports.append("```mermaid")
+            reports.append(build_mermaid_graph(table, downstream_assets))
+            reports.append("```")
+            reports.append("")
 
-                with DataHubContext(live_client):
-                    tag_result = write_back_tag(table_urn, overall, dry_run=False, server=GMS_URL, token=GMS_TOKEN)
-                    if tag_result:
-                        reports.append(f"> \U0001F3F7\uFE0F Tag written to DataHub for `{table}` (severity: {overall}).")
+            if mode == "live" and overall in ("Breaking", "Critical"):
+                try:
+                    from datahub_agent_context.context import DataHubContext
+                    from write_back_tag import write_back_tag
+                    from write_back_context_document import write_back_context_document
+                    from report_builder import build_full_report
 
-                    full_report = build_full_report(
-                        table=table, table_urn=table_urn, operations=ops,
-                        use_llm=False, downstream_assets=downstream_assets,
-                    )
-                    doc_result = write_back_context_document(
-                        table=table, table_urn=table_urn, report_content=full_report,
-                        overall_severity=overall, dry_run=False,
-                    )
-                    if doc_result:
-                        reports.append(f"> \U0001F4C4 Context Document saved to DataHub for `{table}`.")
-                reports.append("")
-            except Exception as e:
-                print(f"[ci_impact_check] Write-back failed for {table}: {e}")
-                reports.append(f"> \u26A0\uFE0F Write-back to DataHub failed: {e}")
-                reports.append("")
+                    with DataHubContext(live_client):
+                        tag_result = write_back_tag(table_urn, overall, dry_run=False, server=GMS_URL, token=GMS_TOKEN)
+                        if tag_result:
+                            reports.append(f"> \U0001F3F7\uFE0F Tag written to DataHub for `{table}` (severity: {overall}).")
+
+                        full_report = build_full_report(
+                            table=table, table_urn=table_urn, operations=ops,
+                            use_llm=False, downstream_assets=downstream_assets,
+                        )
+                        doc_result = write_back_context_document(
+                            table=table, table_urn=table_urn, report_content=full_report,
+                            overall_severity=overall, dry_run=False,
+                        )
+                        if doc_result:
+                            reports.append(f"> \U0001F4C4 Context Document saved to DataHub for `{table}`.")
+                    reports.append("")
+                except Exception as e:
+                    print(f"[ci_impact_check] Write-back failed for {table}: {e}")
+                    reports.append(f"> \u26A0\uFE0F Write-back to DataHub failed: {e}")
+                    reports.append("")
 
 if mode == "live":
     note = (
         "> **Mode:** `live`. Includes live downstream lineage counts from "
         "your DataHub instance. Breaking/Critical changes are tagged and "
-        "logged as Context Documents in DataHub automatically.\n"
+        "logged as Context Documents in DataHub automatically. Files with "
+        "multiple `ALTER TABLE` statements are fully analyzed, one section "
+        "per table.\n"
     )
 else:
     note = (
         "> **Mode:** `offline`. No DataHub connection configured or reachable "
-        "-- severity reflects structural risk only. No write-back performed.\n"
+        "-- severity reflects structural risk only. No write-back performed. "
+        "Files with multiple `ALTER TABLE` statements are fully analyzed, one "
+        "section per table.\n"
     )
 
 header = "# PRIG Impact Report\n\n" + note + "\n"

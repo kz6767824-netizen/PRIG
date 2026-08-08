@@ -1,12 +1,13 @@
 # PRIG Impact Report
 
-> **Mode:** `live`. Includes live downstream lineage counts from your DataHub instance. Breaking/Critical changes are tagged and logged as Context Documents in DataHub automatically.
+> **Mode:** `offline`. No DataHub connection configured or reachable -- severity reflects structural risk only. No write-back performed. Files with multiple `ALTER TABLE` statements are fully analyzed, one section per table.
 
 ## File: `.\migrations\test_migration.sql`
 
-**Table:** `orders`
+### Table: `customers
+Â`
 
-**Mode:** `live` (downstream assets: 3)
+**Mode:** `offline`
 
 **Overall Severity:** `Breaking`
 
@@ -16,27 +17,32 @@
 
 |---|---|---|
 
-| DROP | `shipping_address` | **Breaking** |
+| UNKNOWN | `None` | **Breaking** |
 
-| ADD | `loyalty_points` | **Safe** |
+| UNKNOWN | `None` | **Breaking** |
+
+| UNKNOWN | `None` | **Breaking** |
+
+| UNKNOWN | `None` | **Breaking** |
+
+| UNKNOWN | `None` | **Breaking** |
+
+| UNKNOWN | `None` | **Breaking** |
+
+| UNKNOWN | `None` | **Breaking** |
+
+| UNKNOWN | `None` | **Breaking** |
 
 
 
-### Downstream Lineage
+#### Downstream Lineage
 
 ```mermaid
 
 graph LR
-  orders["orders"]
-  orders --> orders_d0["customer_summary_dashboard<br/><i>DATASET</i>"]
-  orders --> orders_d1["daily_revenue_dashboard<br/><i>DATASET</i>"]
-  orders --> orders_d2["regional_sales_dashboard<br/><i>DATASET</i>"]
+  customers_Â["customers
+Â"]
+  customers_Â -.->|no downstream assets found| customers_Â_none["(none)"]
 
 ```
-
-
-
-> 🏷️ Tag written to DataHub for `orders` (severity: Breaking).
-
-> 📄 Context Document saved to DataHub for `orders`.
 

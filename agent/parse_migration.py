@@ -133,32 +133,41 @@ def _parse_rename_clause(clause: str) -> Optional[Dict[str, Any]]:
     return {"action": "RENAME", "column": m.group(1), "new_column": m.group(2)}
 
 
-def parse_migration(sql_text: str) -> Dict[str, Any]:
-    sql_text = sql_text.strip()
-    if not sql_text:
-        return {"table": None, "operations": []}
+def _parse_alter_statement(stmt_text: str) -> Optional[Dict[str, Any]]:
+    """
+    Parses ONE statement's text (already isolated -- no other statements
+    mixed in) into {"table":.., "operations":..}. This is the shared core
+    used by both parse_migration() (single-table, unchanged behavior) and
+    parse_multi_table_migration() (new) -- so both paths run through
+    identical, already-tested clause parsing with zero duplication.
+    """
+    stmt_text = stmt_text.strip()
+    if not stmt_text:
+        return None
 
     # --- DROP TABLE: handled separately, not a column-level clause ---
-    m = re.match(r'^DROP\s+TABLE\s+([A-Za-z_]\w*)', sql_text, re.IGNORECASE)
+    m = re.match(r'^DROP\s+TABLE\s+([A-Za-z_]\w*)', stmt_text, re.IGNORECASE)
     if m:
         return {
             "table": m.group(1),
             "operations": [{"action": "DROP_TABLE", "column": None}],
         }
 
-    parsed = sqlparse.parse(sql_text)
+    parsed = sqlparse.parse(stmt_text)
     if not parsed:
-        return {"table": None, "operations": []}
+        return None
 
-    table = _extract_table_name(parsed[0])
+    stmt = parsed[0]
+    table = _extract_table_name(stmt)
     if not table:
-        return {"table": None, "operations": []}
+        return None
 
     # Strip the "ALTER TABLE <table>" prefix to get the clause text.
     prefix_match = re.search(
-        r'ALTER\s+TABLE\s+' + re.escape(table) + r'\s*', sql_text, re.IGNORECASE
+        r'ALTER\s+TABLE\s+' + re.escape(table) + r'\s*', stmt_text, re.IGNORECASE
     )
-    remainder = sql_text[prefix_match.end():] if prefix_match else sql_text
+    remainder = stmt_text[prefix_match.end():] if prefix_match else stmt_text
+    remainder = remainder.rstrip(";").strip()
 
     operations = []
     for clause in _split_top_level_clauses(remainder):
@@ -175,6 +184,60 @@ def parse_migration(sql_text: str) -> Dict[str, Any]:
             operations.append({"action": "UNKNOWN", "column": None, "raw_clause": clause})
 
     return {"table": table, "operations": operations}
+
+
+def parse_migration(sql_text: str) -> Dict[str, Any]:
+    """
+    Single-table entry point (unchanged behavior/signature). Only ever
+    analyzes the FIRST statement, even if more are present -- see
+    parse_multi_table_migration() for analyzing every statement.
+    """
+    sql_text = sql_text.strip()
+    if not sql_text:
+        return {"table": None, "operations": []}
+
+    parsed = sqlparse.parse(sql_text)
+    if not parsed:
+        return {"table": None, "operations": []}
+
+    first_stmt_text = str(parsed[0])
+    result = _parse_alter_statement(first_stmt_text)
+    if result is None:
+        return {"table": None, "operations": []}
+
+    # Surface how many additional statements were present but ignored, so
+    # callers (Slack bot, Streamlit app) can warn the user -- e.g. "you
+    # sent 2 ALTER TABLE statements, only 'orders' was analyzed."
+    result["ignored_statement_count"] = len(parsed) - 1
+    return result
+
+
+def parse_multi_table_migration(sql_text: str) -> List[Dict[str, Any]]:
+    """
+    Parses EVERY statement in sql_text, one result per table found, using
+    the exact same tested clause-parsing logic as parse_migration() (via
+    the shared _parse_alter_statement() helper) -- just run once per
+    statement instead of only on the first.
+
+    Returns a list of {"table":.., "operations":..} dicts, one per
+    statement that contained a recognizable table (DROP TABLE or
+    ALTER TABLE ... <table>). Statements that don't resolve to a table
+    are silently skipped (e.g. blank fragments from stray semicolons).
+    """
+    sql_text = sql_text.strip()
+    if not sql_text:
+        return []
+
+    parsed_statements = sqlparse.parse(sql_text)
+    results = []
+    for stmt in parsed_statements:
+        stmt_text = str(stmt).strip()
+        if not stmt_text:
+            continue
+        result = _parse_alter_statement(stmt_text)
+        if result:
+            results.append(result)
+    return results
 
 
 if __name__ == "__main__":
