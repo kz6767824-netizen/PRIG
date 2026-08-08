@@ -1,5 +1,5 @@
 -- ======================================================================
--- PR IMPACT GUARDIAN (PRIG) - AUTOMATED SAFE REMEDIATION PATCH
+-- PR IMPACT GUARDIAN (koza) - AUTOMATED SAFE REMEDIATION PATCH
 -- Target Table: orders
 -- Pattern: Rename-Then-View (preserves data, keeps old names working)
 -- NOTE: Review and adapt column lists before running in production.
