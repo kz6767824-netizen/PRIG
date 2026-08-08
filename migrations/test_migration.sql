@@ -1,7 +1,7 @@
 ALTER TABLE orders
   DROP COLUMN loyalty_points,
   ADD COLUMN referral_code VARCHAR(20);
-#test number 2
+#test number 2 with koza check now
 ALTER TABLE customers
   DROP COLUMN phone;
   

@@ -1,4 +1,4 @@
-name: PR Impact Guardian - Impact Check
+name: koza Impact Guardian - Impact Check
 
 on:
   pull_request:
@@ -52,17 +52,17 @@ jobs:
         if: steps.find_sql.outputs.sql_files != ''
         uses: actions/upload-artifact@v4
         with:
-          name: prig-offline-reports
-          path: prig-reports/
+          name: koza-offline-reports
+          path: koza-reports/
 
-      - name: Post impact report as PR comment
+      - name: Post impact report as koza comment
         if: steps.find_sql.outputs.sql_files != '' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const path = 'prig-reports/offline-impact-report.md';
+            const path = 'koza-reports/offline-impact-report.md';
             let body = fs.readFileSync(path, 'utf8');
 
             const MAX_LEN = 60000;
@@ -70,8 +70,8 @@ jobs:
               body = body.slice(0, MAX_LEN) + '\n\n_...report truncated, see full artifact in the Actions run._';
             }
 
-            const marker = '<!-- prig-impact-report -->';
-            const commentBody = `${marker}\n## PR Impact Guardian -- Impact Report\n\n${body}`;
+            const marker = '<!-- koza-impact-report -->';
+            const commentBody = `${marker}\n## koza Impact Guardian -- Impact Report\n\n${body}`;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
@@ -100,5 +100,5 @@ jobs:
       - name: Fail build if Critical severity detected
         if: steps.find_sql.outputs.sql_files != '' && steps.run_analysis.outputs.any_critical == 'true'
         run: |
-          echo "::error::PR Impact Guardian detected at least one CRITICAL severity change. See the PR comment for details. Blocking merge."
+          echo "::error::koza Impact Guardian detected at least one CRITICAL severity change. See the koza comment for details. Blocking merge."
           exit 1

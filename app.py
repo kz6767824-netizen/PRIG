@@ -23,7 +23,7 @@ from write_back_context_document import write_back_context_document, write_back_
 from lineage_graph import build_mermaid_graph
 
 DATAHUB_TOKEN = os.environ.get("DATAHUB_TOKEN", "")
-MAX_LINEAGE_HOPS = int(os.environ.get("PRIG_MAX_LINEAGE_HOPS", "2"))
+MAX_LINEAGE_HOPS = int(os.environ.get("koza_MAX_LINEAGE_HOPS", "2"))
 
 
 def render_mermaid(mermaid_code: str, height: int = 320):
@@ -37,8 +37,8 @@ def render_mermaid(mermaid_code: str, height: int = 320):
     components.html(html, height=height, scrolling=True)
 
 
-st.set_page_config(page_title="PR Impact Guardian", layout="centered")
-st.title("🛡️ PR Impact Guardian")
+st.set_page_config(page_title="koza Impact Guardian", layout="centered")
+st.title("🛡️ koza")
 st.caption("One bad ALTER TABLE can silently break every downstream dashboard. Don't let a DROP COLUMN become a production incident. This agent stops it before merge.")
 
 # --- Sidebar controls ---
@@ -252,8 +252,8 @@ if analyze_clicked:
                 context_doc_result = {"success": False, "message": str(e)}
                 context_doc_mode = "error"
 
-    st.session_state["prig_context_doc_result"] = context_doc_result
-    st.session_state["prig_context_doc_mode"] = context_doc_mode
+    st.session_state["koza_context_doc_result"] = context_doc_result
+    st.session_state["koza_context_doc_mode"] = context_doc_mode
 
     # Persist results in session_state so they survive reruns triggered by
     # OTHER widgets (the table selector, write-back buttons below). Without
@@ -261,14 +261,14 @@ if analyze_clicked:
     # analyze_clicked is False again -- st.button() only returns True on the
     # exact run it was clicked -- wiping out everything inside this `if`
     # block and forcing the user back to square one.
-    st.session_state["prig_per_table_data"] = per_table_data
+    st.session_state["koza_per_table_data"] = per_table_data
 
 # Render results from session_state if we have any -- from THIS run's
 # button click, or persisted from a prior run. Deliberately OUTSIDE
 # `if analyze_clicked:` so switching the table selector below (which
 # reruns the whole script) keeps showing results instead of vanishing.
-if st.session_state.get("prig_per_table_data"):
-    per_table_data = st.session_state["prig_per_table_data"]
+if st.session_state.get("koza_per_table_data"):
+    per_table_data = st.session_state["koza_per_table_data"]
 
     # Overall-of-overalls badge across every table in this migration
     combined_overall = compute_overall_severity(
@@ -294,15 +294,15 @@ if st.session_state.get("prig_per_table_data"):
     # so this block only DISPLAYS the result -- it never writes anything
     # itself. That's what keeps it safe to sit here, outside
     # `if analyze_clicked:`: dropdown reruns re-render this status line but
-    # never re-trigger a save, since st.session_state["prig_context_doc_result"]
+    # never re-trigger a save, since st.session_state["koza_context_doc_result"]
     # is only ever set from inside the analysis block.
     if save_context_doc:
         st.markdown("---")
         if dry_run:
             st.info("🔒 **Dry run mode is ON.** No Context Document was saved. Uncheck 'Dry run' in the sidebar and re-run 'Check Impact' to save for real.")
         else:
-            doc_result = st.session_state.get("prig_context_doc_result")
-            doc_mode = st.session_state.get("prig_context_doc_mode")
+            doc_result = st.session_state.get("koza_context_doc_result")
+            doc_mode = st.session_state.get("koza_context_doc_mode")
             if doc_result is None:
                 st.info("Context Document saving is enabled -- click 'Check Impact' again to generate and save it for this migration.")
             elif doc_result.get("success"):
@@ -335,7 +335,7 @@ if st.session_state.get("prig_per_table_data"):
         options=table_names,
         format_func=lambda name: f"{color_map.get(per_table_data[name]['overall'], ('', '❓'))[1]} {name} ({per_table_data[name]['overall']})",
         label_visibility="collapsed",
-        key="prig_table_selector",
+        key="koza_table_selector",
     )
 
     # Quick-glance strip of every table's severity, so switching the
@@ -453,4 +453,4 @@ if st.session_state.get("prig_per_table_data"):
 
 # --- Footer ---
 st.markdown("---")
-st.caption("PR Impact Guardian | DataHub Agent Hackathon 2026")
+st.caption("koza--PR Impact Guardian | DataHub Agent Hackathon 2026")
