@@ -115,10 +115,7 @@ disclaimers. Shown at full size below.
 
 ---
 
-## Streamlit Workflow
+## Other Examples
 
-*(to fill in)*
-
-## GitHub Actions Workflow
-
-*(to fill in)*
+- **[Example A: Customer & Orders Cleanup](01-customer-orders-cleanup.md)** — Streamlit workflow, full write-back
+- **[Example C: Support & Marketing Refresh](03-support-marketing-refresh.md)** — GitHub Actions, fully automated on a PR

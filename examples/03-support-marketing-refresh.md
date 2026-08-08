@@ -149,10 +149,7 @@ correctly attributed to GitHub Actions throughout.
 
 ---
 
-## Streamlit Workflow
+## Other Examples
 
-*(to fill in)*
-
-## Slack Workflow
-
-*(to fill in)*
+- **[Example A: Customer & Orders Cleanup](01-customer-orders-cleanup.md)** — Streamlit workflow, full write-back
+- **[Example B: Product & Supplier Overhaul](02-product-supplier-overhaul.md)** — Slack workflow, read-only analysis

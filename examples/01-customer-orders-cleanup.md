@@ -159,10 +159,7 @@ not a mock.
 
 ---
 
-## Slack Workflow
+## Other Examples
 
-*(to fill in)*
-
-## GitHub Actions Workflow
-
-*(to fill in)*
+- **[Example B: Product & Supplier Overhaul](02-product-supplier-overhaul.md)** — Slack workflow, read-only analysis
+- **[Example C: Support & Marketing Refresh](03-support-marketing-refresh.md)** — GitHub Actions, fully automated on a PR
