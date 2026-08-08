@@ -45,6 +45,7 @@ if GMS_URL and GMS_TOKEN:
 
 reports = []
 any_critical = False
+context_doc_entries = []  # collected across ALL files/tables, written as ONE combined document at the end
 
 for root, dirs, files in os.walk('.'):
     if 'patches' in root.split(os.sep):
@@ -113,7 +114,6 @@ for root, dirs, files in os.walk('.'):
                 try:
                     from datahub_agent_context.context import DataHubContext
                     from write_back_tag import write_back_tag
-                    from write_back_context_document import write_back_context_document
                     from report_builder import build_full_report
 
                     with DataHubContext(live_client):
@@ -125,25 +125,49 @@ for root, dirs, files in os.walk('.'):
                             table=table, table_urn=table_urn, operations=ops,
                             use_llm=False, downstream_assets=downstream_assets,
                         )
-                        doc_result = write_back_context_document(
-                            table=table, table_urn=table_urn, report_content=full_report,
-                            overall_severity=overall, dry_run=False,
-                        )
-                        if doc_result:
-                            reports.append(f"> \U0001F4C4 Context Document saved to DataHub for `{table}`.")
+                        # NOT written individually anymore -- collected here and
+                        # written as ONE combined Context Document covering every
+                        # Breaking/Critical table across the whole PR, after the
+                        # full scan below finishes.
+                        context_doc_entries.append({
+                            "table": table,
+                            "table_urn": table_urn,
+                            "report_content": full_report,
+                            "overall_severity": overall,
+                        })
                     reports.append("")
                 except Exception as e:
-                    print(f"[ci_impact_check] Write-back failed for {table}: {e}")
-                    reports.append(f"> \u26A0\uFE0F Write-back to DataHub failed: {e}")
+                    print(f"[ci_impact_check] Tag write-back failed for {table}: {e}")
+                    reports.append(f"> \u26A0\uFE0F Tag write-back to DataHub failed: {e}")
                     reports.append("")
+
+if mode == "live" and context_doc_entries:
+    try:
+        from datahub_agent_context.context import DataHubContext
+        from write_back_context_document import write_back_combined_context_document
+
+        with DataHubContext(live_client):
+            doc_result = write_back_combined_context_document(
+                tables=context_doc_entries, dry_run=False
+            )
+        if doc_result:
+            table_list = ", ".join(f"`{t['table']}`" for t in context_doc_entries)
+            reports.append(
+                f"> \U0001F4C4 One combined Context Document saved to DataHub, "
+                f"covering {len(context_doc_entries)} table(s): {table_list}"
+            )
+    except Exception as e:
+        print(f"[ci_impact_check] Combined context document write-back failed: {e}")
+        reports.append(f"> \u26A0\uFE0F Combined Context Document write-back failed: {e}")
 
 if mode == "live":
     note = (
         "> **Mode:** `live`. Includes live downstream lineage counts from "
-        "your DataHub instance. Breaking/Critical changes are tagged and "
-        "logged as Context Documents in DataHub automatically. Files with "
-        "multiple `ALTER TABLE` statements are fully analyzed, one section "
-        "per table.\n"
+        "your DataHub instance. Breaking/Critical changes are tagged "
+        "individually per table; a single combined Context Document covering "
+        "every Breaking/Critical table in this PR is saved to DataHub. Files "
+        "with multiple `ALTER TABLE` statements are fully analyzed, one "
+        "section per table.\n"
     )
 else:
     note = (
