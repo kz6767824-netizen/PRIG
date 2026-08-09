@@ -40,6 +40,12 @@ live DataHub instance.
 *(Link goes live once the recording is uploaded — see `examples/` for
 static screenshots of each interface in the meantime.)*
 
+> **If you only do one thing:** open [`examples/`](examples/). Every
+> claim in this README is demonstrated there with real, uncropped
+> screenshots — Streamlit's live report, Slack's conversation, and the
+> actual PR comment GitHub Actions posted. Nothing in this repo is a
+> mockup.
+
 ## Table of Contents
 
 - [Demo Video](#demo-video)
@@ -187,6 +193,13 @@ variables → Actions), alongside `DATAHUB_GMS_TOKEN` set to the same
 token from the step above. Keep the `ngrok http 8081` terminal window
 open — closing it drops the tunnel, and any PR check that runs after
 that will fall back to `offline` mode automatically rather than fail.
+
+This isn't just a setup requirement, it's a real reliability property:
+during development, the tunnel dropped mid-testing more than once, and
+every time, the CI check degraded to offline mode and still posted a
+useful structural-risk report instead of the workflow just failing red.
+Koza was built and tested against real network interruption, not just
+the happy path.
 
 ## Quick Start Per Interface
 
