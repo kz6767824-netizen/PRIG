@@ -22,6 +22,13 @@ Approach:
   4. DROP TABLE is handled as a separate top-level case, since it's not a
      column-level clause at all.
 
+MULTI-TABLE ADDITION: parse_migration() itself is UNCHANGED and remains
+the single-statement entry point. parse_multi_table_migration() is a new,
+purely additive function that splits a full migration file into individual
+top-level statements (semicolon-separated, respecting parens) and calls
+the existing, unchanged parse_migration() on each one. Zero risk to the
+already-tested single-statement path.
+
 Known, explicitly deferred (NOT implemented in this version):
   - SET NOT NULL as its own operation type. It shares the
     "ALTER COLUMN <name>" prefix with TYPE_CHANGE and deliberately needs
@@ -75,6 +82,35 @@ def _split_top_level_clauses(text: str) -> List[str]:
     if current:
         parts.append("".join(current))
     return [p.strip().rstrip(";").strip() for p in parts if p.strip().rstrip(";").strip()]
+
+
+def _split_top_level_statements(sql_text: str) -> List[str]:
+    """
+    Splits a multi-statement migration file into individual statements on
+    semicolons NOT inside parentheses (same logic as _split_top_level_clauses,
+    applied at the statement level instead of the clause level). This is
+    what makes multi-table migrations possible -- each returned string is
+    handed to the existing, unchanged parse_migration() one at a time.
+    """
+    parts = []
+    depth = 0
+    current = []
+    for ch in sql_text:
+        if ch == "(":
+            depth += 1
+            current.append(ch)
+        elif ch == ")":
+            depth -= 1
+            current.append(ch)
+        elif ch == ";" and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    tail = "".join(current)
+    if tail.strip():
+        parts.append(tail)
+    return [p.strip() for p in parts if p.strip()]
 
 
 def _parse_add_clause(clause: str) -> Optional[Dict[str, Any]]:
@@ -133,8 +169,36 @@ def _parse_rename_clause(clause: str) -> Optional[Dict[str, Any]]:
     return {"action": "RENAME", "column": m.group(1), "new_column": m.group(2)}
 
 
+def _strip_leading_comment_lines(sql_text: str) -> str:
+    """
+    Strips leading '-- comment' lines and blank lines from the front of a
+    statement before operation matching. Needed because parse_migration()'s
+    DROP TABLE check is anchored with ^DROP\\s+TABLE -- if a statement is
+    preceded by an explanatory comment (very normal SQL style, and used
+    throughout this project's own demo files), the anchor would otherwise
+    never match since the text starts with '--', not 'DROP'. Only strips
+    from the FRONT, so a comment appearing mid-statement (e.g. after a
+    comma in an ALTER TABLE clause list) is left untouched -- that's a
+    separate, not-yet-handled case, not silently mishandled here.
+    """
+    lines = sql_text.split("\n")
+    i = 0
+    while i < len(lines) and (not lines[i].strip() or lines[i].strip().startswith("--")):
+        i += 1
+    return "\n".join(lines[i:])
+
+
 def parse_migration(sql_text: str) -> Dict[str, Any]:
+    """
+    UNCHANGED single-statement parser. Do not modify -- this is the
+    already-tested path that parse_multi_table_migration() below builds on
+    top of, without touching a single line of it.
+    """
     sql_text = sql_text.strip()
+    if not sql_text:
+        return {"table": None, "operations": []}
+
+    sql_text = _strip_leading_comment_lines(sql_text).strip()
     if not sql_text:
         return {"table": None, "operations": []}
 
@@ -177,6 +241,32 @@ def parse_migration(sql_text: str) -> Dict[str, Any]:
     return {"table": table, "operations": operations}
 
 
+def parse_multi_table_migration(sql_text: str) -> List[Dict[str, Any]]:
+    """
+    Splits a full migration file into individual top-level statements
+    (semicolon-separated, respecting parens so a DECIMAL(10,2) inside one
+    statement never causes a false split) and parses EACH ONE with the
+    existing, unchanged parse_migration().
+
+    Returns a list of per-statement results, each in the same shape
+    parse_migration() already returns: {"table": ..., "operations": [...]}.
+
+    Statements that don't resolve to a table (blank lines, comments-only
+    fragments, or genuinely unparseable text) are skipped rather than
+    included as an empty/None entry -- callers can assume every item in
+    the returned list has a real table name.
+    """
+    results = []
+    for stmt in _split_top_level_statements(sql_text):
+        # parse_migration() strips/re-adds semicolons internally via
+        # rstrip(';') in clause splitting and its own DROP TABLE regex,
+        # so passing the statement as-is (no trailing ';') is safe.
+        parsed = parse_migration(stmt)
+        if parsed.get("table"):
+            results.append(parsed)
+    return results
+
+
 if __name__ == "__main__":
     # --- The 3 ORIGINAL test cases, re-run against the upgraded parser ---
     test_1 = """
@@ -213,3 +303,29 @@ if __name__ == "__main__":
         print(f"--- Test {i} ---")
         print(parse_migration(sql))
         print()
+
+    # --- NEW: multi-table migration file, mixing several statement types ---
+    print("--- Multi-table test ---")
+    multi_sql = """
+    ALTER TABLE orders
+      DROP COLUMN shipping_address,
+      ADD COLUMN loyalty_points INT;
+
+    ALTER TABLE customers
+      ALTER COLUMN total_amount TYPE DECIMAL(10,2);
+
+    DROP TABLE old_staging_table;
+
+    ALTER TABLE payments
+      RENAME COLUMN txn_id TO transaction_id;
+    """
+    multi_results = parse_multi_table_migration(multi_sql)
+    print(f"Found {len(multi_results)} table(s):")
+    for r in multi_results:
+        print(f"  - {r['table']}: {len(r['operations'])} operation(s)")
+        for op in r['operations']:
+            print(f"      {op}")
+
+    assert len(multi_results) == 4, f"FIX FAILED: expected 4 tables, got {len(multi_results)}"
+    assert {r['table'] for r in multi_results} == {"orders", "customers", "old_staging_table", "payments"}
+    print("\nPASS: all 4 tables parsed correctly from one multi-statement file")

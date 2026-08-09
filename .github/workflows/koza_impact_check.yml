@@ -1,0 +1,104 @@
+name: koza Impact Guardian - Impact Check
+
+on:
+  pull_request:
+    paths:
+      - '**.sql'
+      - 'migrations/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  impact-analysis:
+    runs-on: ubuntu-latest
+    env:
+      DATAHUB_GMS_URL: ${{ secrets.DATAHUB_GMS_URL }}
+      DATAHUB_GMS_TOKEN: ${{ secrets.DATAHUB_GMS_TOKEN }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install sqlparse requests
+          pip install acryl-datahub datahub-agent-context
+
+      - name: Find SQL files (excluding generated patches)
+        id: find_sql
+        run: |
+          SQL_FILES=$(find . -name "*.sql" -type f ! -path "*/patches/*" ! -path "*/agent/patches/*" | tr '\n' ' ')
+          echo "sql_files=${SQL_FILES}" >> "$GITHUB_OUTPUT"
+          echo "Found SQL files: ${SQL_FILES}"
+
+      - name: Run impact analysis
+        id: run_analysis
+        if: steps.find_sql.outputs.sql_files != ''
+        run: python3 agent/ci_impact_check.py
+        env:
+          DATAHUB_GMS_URL: ${{ secrets.DATAHUB_GMS_URL }}
+          DATAHUB_GMS_TOKEN: ${{ secrets.DATAHUB_GMS_TOKEN }}
+
+      - name: Upload report artifact
+        if: steps.find_sql.outputs.sql_files != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: koza-offline-reports
+          path: koza-reports/
+
+      - name: Post impact report as koza comment
+        if: steps.find_sql.outputs.sql_files != '' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = 'koza-reports/offline-impact-report.md';
+            let body = fs.readFileSync(path, 'utf8');
+
+            const MAX_LEN = 60000;
+            if (body.length > MAX_LEN) {
+              body = body.slice(0, MAX_LEN) + '\n\n_...report truncated, see full artifact in the Actions run._';
+            }
+
+            const marker = '<!-- koza-impact-report -->';
+            const commentBody = `${marker}\n## koza Impact Guardian -- Impact Report\n\n${body}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: commentBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody,
+              });
+            }
+
+      - name: Fail build if Critical severity detected
+        if: steps.find_sql.outputs.sql_files != '' && steps.run_analysis.outputs.any_critical == 'true'
+        run: |
+          echo "::error::koza Impact Guardian detected at least one CRITICAL severity change. See the koza comment for details. Blocking merge."
+          exit 1

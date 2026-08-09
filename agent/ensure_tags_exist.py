@@ -16,8 +16,8 @@ from datahub.metadata.schema_classes import TagPropertiesClass
 from datahub.metadata.urns import TagUrn
 
 ALL_TAG_DESCRIPTIONS = {
-    "pending-review-breaking": "Pending schema change classified as BREAKING by PR Impact Guardian",
-    "pending-review-critical": "Pending schema change classified as CRITICAL by PR Impact Guardian",
+    "pending-review-breaking": "Pending schema change classified as BREAKING by koza",
+    "pending-review-critical": "Pending schema change classified as CRITICAL by koza",
     "pending-review": "Legacy generic pending-review tag",
     "PII": "Column contains personally identifiable information",
 }

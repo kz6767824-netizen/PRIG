@@ -1,0 +1,127 @@
+name: koza Impact Guardian - Patch Generator
+
+on:
+  pull_request:
+    paths:
+      - '**.sql'
+      - 'migrations/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  generate-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install sqlparse
+        run: pip install sqlparse
+
+      - name: Find SQL files (excluding generated patches)
+        id: find_sql
+        run: |
+          SQL_FILES=$(find . -name "*.sql" -type f ! -path "*/patches/*" ! -path "*/agent/patches/*" | tr '\n' ' ')
+          echo "sql_files=${SQL_FILES}" >> "$GITHUB_OUTPUT"
+          echo "Found SQL files: ${SQL_FILES}"
+
+      - name: Generate remediation patches
+        id: generate
+        if: steps.find_sql.outputs.sql_files != ''
+        run: |
+          mkdir -p patches
+          python3 << 'PYEOF'
+          import sys
+          import os
+          sys.path.insert(0, 'agent')
+          from parse_migration import parse_migration
+          from patch_generator import save_patch_file
+
+          generated_any = False
+
+          for root, dirs, files in os.walk('.'):
+              # Skip generated patch directories
+              if 'patches' in root.split(os.sep):
+                  continue
+              for f in files:
+                  if not f.endswith('.sql'):
+                      continue
+                  path = os.path.join(root, f)
+                  with open(path, 'r') as file:
+                      sql = file.read()
+                  parsed = parse_migration(sql)
+                  table = parsed.get('table')
+                  ops = parsed.get('operations', [])
+                  if table and ops:
+                      patch_path = save_patch_file(table, ops, output_dir='patches')
+                      print(f"Generated patch: {patch_path}")
+                      generated_any = True
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as gh_out:
+              gh_out.write(f"generated_any={'true' if generated_any else 'false'}\n")
+          PYEOF
+
+      - name: Upload patch artifacts
+        if: steps.find_sql.outputs.sql_files != '' && steps.generate.outputs.generated_any == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: safe-migration-patches
+          path: patches/*.sql
+
+      - name: Post patches as koza comment
+        if: steps.find_sql.outputs.sql_files != '' && steps.generate.outputs.generated_any == 'true' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const patchesDir = 'patches';
+            const files = fs.readdirSync(patchesDir).filter(f => f.endsWith('.sql'));
+
+            const MAX_LEN = 60000;
+            let body = '';
+            for (const file of files) {
+              const content = fs.readFileSync(path.join(patchesDir, file), 'utf8');
+              body += `### \`${file}\`\n\n\`\`\`sql\n${content}\n\`\`\`\n\n`;
+            }
+
+            if (body.length > MAX_LEN) {
+              body = body.slice(0, MAX_LEN) + '\n\n_...patches truncated, see the full set in the Actions run artifact._';
+            }
+
+            const marker = '<!-- koza-patch-generator -->';
+            const commentBody = `${marker}\n## koza Impact Guardian -- Suggested Safe Migration Patches\n\n${body}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: commentBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody,
+              });
+            }

@@ -220,3 +220,5 @@ venv/
 __pycache__/ 
 .agents/ 
 .claude/ 
+my-docker-compose.yml 
+agent/patches/ 
