@@ -32,13 +32,12 @@ interface, it's load-bearing across all three.
 
 ## Demo Video
 
-📺 **[Watch the 3-minute walkthrough](#)** — Koza catching a breaking
+📺 **[Watch the 3-minute walkthrough](https://youtu.be/41se_CncakE)** — Koza catching a breaking
 change in Streamlit, answering a follow-up question in Slack, and
 blocking a PR automatically in GitHub Actions, all against the same
 live DataHub instance.
 
-*(Link goes live once the recording is uploaded — see `examples/` for
-static screenshots of each interface in the meantime.)*
+
 
 > **If you only do one thing:** open [`examples/`](examples/). Every
 > claim in this README is demonstrated there with real, uncropped
