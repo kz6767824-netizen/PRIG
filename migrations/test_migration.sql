@@ -1,12 +1,9 @@
-ALTER TABLE support_tickets
-  DROP COLUMN priority,
-  ADD COLUMN sla_breached BOOLEAN,
-  RENAME COLUMN subject TO ticket_subject;
+ALTER TABLE orders
+  DROP COLUMN shipping_address,
+  ADD COLUMN referral_code VARCHAR(20),
+  RENAME COLUMN customer_notes TO internal_notes;
 
-ALTER TABLE marketing_campaigns
-  DROP COLUMN budget,
-  ADD COLUMN target_audience VARCHAR(50);
-
-ALTER TABLE sessions
-  ALTER COLUMN duration_seconds TYPE BIGINT,
-  ADD COLUMN device_type VARCHAR(20);
+ALTER TABLE customers
+  DROP COLUMN phone,
+  ALTER COLUMN region TYPE VARCHAR(100),
+  ADD COLUMN loyalty_tier VARCHAR(20) NOT NULL DEFAULT 'bronze';
