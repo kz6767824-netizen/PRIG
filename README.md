@@ -16,12 +16,33 @@
 Koza reads a SQL migration, checks DataHub's real lineage graph to see
 what actually depends on the columns being changed, classifies the
 risk, and generates a safe rewrite — before the change ever reaches
-production. It runs the same way in three places: a **Streamlit** app
-you drive manually, a **Slack bot** you can ask directly, and a
-**GitHub Action** that comments on every PR automatically.
+production. It runs the same way in three places: a Streamlit app you
+drive manually, a Slack bot you can ask directly, and a GitHub Action
+that comments on every PR automatically.
+
+In practice, that means you're never manually tracing a lineage graph
+by hand to figure out whether something depends on the table you're
+about to change — Koza already checked. And it saves time by meeting
+you wherever you actually are: open a PR on GitHub, work through the
+browser via Streamlit, or just mention `@koza analyze <SQL>` or
+`@koza multi <SQL>` in the middle of a Slack conversation about a
+schema change. All three paths run the same underlying analysis
+against the same DataHub instance — DataHub isn't a bolt-on for one
+interface, it's load-bearing across all three.
+
+## Demo Video
+
+📺 **[Watch the 3-minute walkthrough](#)** — Koza catching a breaking
+change in Streamlit, answering a follow-up question in Slack, and
+blocking a PR automatically in GitHub Actions, all against the same
+live DataHub instance.
+
+*(Link goes live once the recording is uploaded — see `examples/` for
+static screenshots of each interface in the meantime.)*
 
 ## Table of Contents
 
+- [Demo Video](#demo-video)
 - [The Problem](#the-problem)
 - [How Koza Solves It](#how-koza-solves-it)
 - [Three Interfaces, One Core](#three-interfaces-one-core)
@@ -197,6 +218,11 @@ python agent\slack_bot.py
 @koza analyze ALTER TABLE orders DROP COLUMN shipping_address;
 @koza multi ALTER TABLE orders DROP COLUMN x; ALTER TABLE customers DROP COLUMN y;
 ```
+Use `analyze` for a single-table migration. Use `multi` when your
+message contains statements for more than one table — it loads every
+table it finds into that channel's session, so follow-up questions
+(`report`, `severity`, `downstream`, `patch`) can target any of them by
+name, not just the one you started with.
 
 ### GitHub Actions
 
